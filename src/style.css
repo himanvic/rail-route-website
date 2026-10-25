@@ -134,8 +134,12 @@ h1, h2, h3, h4, p { margin-top: 0; }
 .result-heading .eyebrow { margin-bottom: 7px; }
 .result-heading h2 { font-family: Georgia, serif; font-weight: 400; letter-spacing: -.03em; font-size: 24px; margin-bottom: 6px; }
 .result-status { font-size: 10px; color: var(--text-muted); text-transform: capitalize; margin: 0; }
-.delay-pill { white-space: nowrap; display: flex; align-items: center; gap: 6px; padding: 8px 10px; background: #e5eee5; color: #4e7453; border-radius: 2px; font-size: 10px; font-weight: 700; }
-.delay-late { background: #f5e3de; color: #98483d; }
+.delay-pill { white-space: nowrap; display: flex; align-items: center; gap: 6px; padding: 8px 10px; background: #e5eee5; color: #4e7453; border-radius: 2px; font-size: 10px; font-weight: 750; letter-spacing: .055em; }
+.delay-pill.delay-late { background: #f5e3de; color: #98483d; }
+.delay-pill.delay-early, .delay-pill.delay-on-time { background: #e5eee5; color: #4e7453; }
+.delay-pill.delay-unknown { background: var(--surface-2); color: var(--text-muted); }
+.theme-dark .delay-pill.delay-late { background: #432c29; color: #f0a79c; }
+.theme-dark .delay-pill.delay-early, .theme-dark .delay-pill.delay-on-time { background: #293a2c; color: #b2d4b5; }
 .journey-line { display: grid; grid-template-columns: 1fr minmax(90px, 1.5fr) 1fr; align-items: center; gap: 13px; background: var(--surface-2); padding: 18px 15px; }
 .journey-place { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .journey-code { color: var(--gold-dark); letter-spacing: .1em; font-weight: 800; font-size: 10px; }
@@ -165,7 +169,20 @@ h1, h2, h3, h4, p { margin-top: 0; }
 .stop-name { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .stop-name strong { font-size: 10px; overflow-wrap: anywhere; }
 .stop-name small, .stop-time small { color: var(--text-muted); font-size: 8px; }
-.stop-time { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; font-size: 9px; }
+.stop-time { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; font-size: 9px; min-width: 86px; }
+.stop-time-clock { font-size: 10px; line-height: 1.15; font-weight: 780; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--text); }
+.stop-time-clock.delay-late { color: var(--danger); }
+.stop-time-clock.delay-early, .stop-time-clock.delay-on-time { color: var(--green); }
+.stop-time-clock.delay-unknown { color: var(--text-muted); }
+.stop-time-status { padding: 2px 5px; border-radius: 2px; font-size: 7px !important; line-height: 1.2; font-weight: 800; letter-spacing: .07em; white-space: nowrap; }
+.stop-time-status.delay-late { background: #f5e3de; color: #98483d; }
+.stop-time-status.delay-early, .stop-time-status.delay-on-time { background: #e5eee5; color: #4e7453; }
+.stop-time-status.delay-unknown { background: var(--surface-2); color: var(--text-muted); }
+.stop-time-detail { color: var(--text-muted) !important; font-size: 7px !important; line-height: 1.35; text-align: right; white-space: nowrap; font-weight: 450; }
+.theme-dark .stop-time-clock.delay-late { color: #f0a79c; }
+.theme-dark .stop-time-clock.delay-early, .theme-dark .stop-time-clock.delay-on-time { color: #b2d4b5; }
+.theme-dark .stop-time-status.delay-late { background: #432c29; color: #f0a79c; }
+.theme-dark .stop-time-status.delay-early, .theme-dark .stop-time-status.delay-on-time { background: #293a2c; color: #b2d4b5; }
 .here-tag { padding: 4px 6px; font-size: 7px; letter-spacing: .08em; background: #e5eee5; color: #4e7453; white-space: nowrap; }
 .theme-dark .here-tag { background: #293a2c; color: #aac7ac; }
 .exception-note { display: flex; gap: 10px; padding: 13px; background: #f6eddb; color: #654f2f; margin-top: 14px; font-size: 10px; line-height: 1.55; }

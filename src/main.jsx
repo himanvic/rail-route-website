@@ -29,18 +29,90 @@ function niceDateTime(value) {
   }).format(parsed) + ' IST';
 }
 
+function formatMinutesAsClock(totalMinutes) {
+  const wrapped = ((Math.round(totalMinutes) % 1440) + 1440) % 1440;
+  const hours24 = Math.floor(wrapped / 60);
+  const minutes = wrapped % 60;
+  const hours12 = hours24 % 12 || 12;
+  return `${String(hours12).padStart(2, '0')}:${String(minutes).padStart(2, '0')} ${hours24 >= 12 ? 'pm' : 'am'}`;
+}
+
 function niceClock(value) {
-  if (!value) return '—';
+  if (value == null || value === '') return '—';
+  const raw = String(value).trim();
+  // Timetable feeds sometimes use a clock-only value (HH:mm) rather than an ISO timestamp.
+  const clockOnly = raw.match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*(am|pm)?$/i);
+  if (clockOnly) {
+    let hours = Number(clockOnly[1]);
+    const minutes = Number(clockOnly[2]);
+    const suffix = clockOnly[3]?.toLowerCase();
+    if (suffix) hours = (hours % 12) + (suffix === 'pm' ? 12 : 0);
+    if (hours <= 23 && minutes <= 59) return formatMinutesAsClock(hours * 60 + minutes);
+    return raw;
+  }
   const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return String(value);
+  if (Number.isNaN(parsed.getTime())) return raw;
   return new Intl.DateTimeFormat('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' }).format(parsed);
 }
 
+function clockWithDelay(scheduledValue, delayMinutes) {
+  if (!scheduledValue || typeof delayMinutes !== 'number' || !Number.isFinite(delayMinutes)) return niceClock(scheduledValue);
+  const raw = String(scheduledValue).trim();
+  const clockOnly = raw.match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*(am|pm)?$/i);
+  if (clockOnly) {
+    let hours = Number(clockOnly[1]);
+    const minutes = Number(clockOnly[2]);
+    const suffix = clockOnly[3]?.toLowerCase();
+    if (suffix) hours = (hours % 12) + (suffix === 'pm' ? 12 : 0);
+    if (hours <= 23 && minutes <= 59) return formatMinutesAsClock(hours * 60 + minutes + delayMinutes);
+    return niceClock(scheduledValue);
+  }
+  const parsed = new Date(scheduledValue);
+  if (Number.isNaN(parsed.getTime())) return niceClock(scheduledValue);
+  return niceClock(new Date(parsed.getTime() + delayMinutes * 60_000).toISOString());
+}
+
+function delayState(value) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 'unknown';
+  if (value > 0) return 'late';
+  if (value < 0) return 'early';
+  return 'on-time';
+}
+
 function delayLabel(value) {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return 'Delay unavailable';
-  if (value > 0) return `${value} min late`;
-  if (value < 0) return `${Math.abs(value)} min early`;
-  return 'On time';
+  const state = delayState(value);
+  if (state === 'late') return 'LATE';
+  if (state === 'early') return 'EARLY';
+  if (state === 'on-time') return 'ON TIME';
+  return 'STATUS UNAVAILABLE';
+}
+
+function stopTimePresentation(stop) {
+  const usesArrival = Boolean(stop.scheduledArrival || stop.actualArrival);
+  const scheduled = (usesArrival ? stop.scheduledArrival : stop.scheduledDeparture)
+    || stop.scheduledArrival || stop.scheduledDeparture || null;
+  const actual = usesArrival
+    ? (stop.actualArrival || (!stop.scheduledArrival ? stop.actualDeparture : null) || null)
+    : (stop.actualDeparture || (!stop.scheduledDeparture ? stop.actualArrival : null) || null);
+  let delay = usesArrival ? stop.delayArrival : stop.delayDeparture;
+  if (typeof delay !== 'number' || !Number.isFinite(delay)) {
+    delay = typeof stop.delayArrival === 'number' && Number.isFinite(stop.delayArrival)
+      ? stop.delayArrival
+      : typeof stop.delayDeparture === 'number' && Number.isFinite(stop.delayDeparture)
+        ? stop.delayDeparture
+        : null;
+  }
+  const state = delayState(delay);
+  const hasActual = Boolean(actual);
+  const hasEstimate = !hasActual && Boolean(scheduled) && typeof delay === 'number';
+  const displayTime = hasActual ? niceClock(actual) : hasEstimate ? clockWithDelay(scheduled, delay) : niceClock(scheduled);
+  const detail = hasActual
+    ? `ACTUAL · SCHED ${niceClock(scheduled)}`
+    : hasEstimate
+      ? `EST. · SCHED ${niceClock(scheduled)}`
+      : 'SCHEDULED TIME';
+  const statusLabel = state === 'unknown' ? (hasActual ? 'REPORTED' : 'SCHEDULED') : delayLabel(delay);
+  return { displayTime, detail, state, statusLabel };
 }
 
 function getStoredStatus(trainNumber) {
@@ -106,7 +178,7 @@ function StatusResult({ result, mode, onRefresh, refreshing }) {
           <h2>{data.trainName || train.name || 'Train status'}</h2>
           <p className="result-status">{statusText}</p>
         </div>
-        <div className={`delay-pill ${typeof data.delayMinutes === 'number' && data.delayMinutes > 0 ? 'delay-late' : ''}`}>
+        <div className={`delay-pill delay-${delayState(data.delayMinutes)}`}>
           <Clock3 size={15} /> {delayLabel(data.delayMinutes)}
         </div>
       </div>
@@ -141,11 +213,15 @@ function StatusResult({ result, mode, onRefresh, refreshing }) {
           <div className="stops-list">
             {safeRoute.map((stop, index) => {
               const active = String(stop.stationCode || stop.station?.code || stop.code || '').toUpperCase() === routeCurrentCode;
-              const stopDelay = typeof stop.delayArrival === 'number' ? stop.delayArrival : stop.delayDeparture;
+              const timing = stopTimePresentation(stop);
               return <div className={`stop-row ${active ? 'active' : ''}`} key={`${stop.sequence || index}-${stop.stationCode}`}>
                 <span className="stop-marker" />
                 <div className="stop-name"><strong>{stop.stationName || stop.stationCode}</strong><small>{stop.stationCode || 'Station code unavailable'}</small></div>
-                <div className="stop-time"><span>{niceClock(stop.scheduledArrival || stop.scheduledDeparture)}</span>{typeof stopDelay === 'number' && <small>{stopDelay > 0 ? `+${stopDelay}m` : stopDelay < 0 ? `${stopDelay}m` : 'On time'}</small>}</div>
+                <div className="stop-time">
+                  <strong className={`stop-time-clock delay-${timing.state}`}>{timing.displayTime}</strong>
+                  <small className={`stop-time-status delay-${timing.state}`}>{timing.statusLabel}</small>
+                  <small className="stop-time-detail">{timing.detail}</small>
+                </div>
                 {active && <span className="here-tag">REPORTED HERE</span>}
               </div>;
             })}
