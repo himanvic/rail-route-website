@@ -1,13 +1,13 @@
 # Project specification — Rail & Route
 
 ## Goal
-A polished, responsive public website for Indian train running status, with a privacy-first PNR redirect and a zero-cost hosting target for a student project.
+A polished, responsive public website for Indian train running status, with a privacy-first PNR redirect and a zero-cost hosting target.
 
 ## Brand and interaction
-- Working name: Rail & Route.
+- Brand: Rail & Route.
 - Palette: ivory `#F7F5EF`, obsidian `#171715`, silver, champagne gold `#C9A66B`, bronze.
 - Tone: calm, editorial, premium, clear; no imitation of official railway branding.
-- Motion: subtle train arrival, progress line, gentle reveal animations; honour reduced-motion preferences.
+- Motion: subtle hero transitions and a live-status route marker that transitions only to provider-reported position updates; scheduled journey routes do not animate. Honour reduced-motion preferences.
 - Layout: responsive on mobile, tablet and desktop; accessible labels, keyboard focus and clear error messages.
 
 ## Features in current starter
@@ -15,7 +15,7 @@ A polished, responsive public website for Indian train running status, with a pr
 2. If a successful API response exists, show current/previous/next station fields, delay, speed when provided, route timeline, provider data and retrieval time.
 3. Journey Explorer: search trains between two station codes/names, filter by journey date, compare scheduled departure/arrival, duration, distance and halts where supplied.
 4. Station suggestions are filtered from a locally hosted station catalogue. No RailRadar call is made for autocomplete; users can also enter a station code directly.
-5. Expand a train result to load its full halts-only schedule. Highlight the selected source-to-destination segment and show an animated illustrative route line. The decorative animation is never represented as live GPS.
+5. Expand a train result to load its full station-by-station schedule. The scheduled route is a static timeline only; it does not animate a train marker because scheduled timetable data is not live position data.
 6. PNR action redirects directly to the official enquiry page. There is no local PNR form, storage, logging or PNR API call.
 7. Only live status calls the RailRadar adapter and is served through a short-lived Cloudflare edge cache (120 seconds, subject to provider terms). Station suggestions, trains-between-stations search and full timetables use static sharded JSON files and do not consume the RailRadar monthly API quota.
 8. Daily GitHub Actions sync checks a community dataset source, creates compact station/train/route indexes and commits a new snapshot. The displayed upstream data revision date is distinct from the daily sync-check time.
@@ -36,6 +36,6 @@ Before publicly enabling live API queries, verify the current provider account, 
 ## Not included / future work
 - PNR lookup or storage.
 - Guarantee that the upstream community timetable is updated daily; GitHub Actions checks daily, but the source maintainer controls when the actual dataset changes.
-- Geographic map tiles and live GPS map. The first release uses an animated timeline; its movement is decorative and not a representation of train position.
+- Geographic map tiles and a continuous GPS map. Live status can mark the provider-reported station/segment position when that information matches the supplied route; the scheduled Journey Explorer remains non-animated.
 - User accounts, personal search history, database, payment processing or analytics.
 - Guarantee of five years of uninterrupted hosting or live railway data.

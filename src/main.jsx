@@ -2,7 +2,7 @@ import React, { useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   ArrowDownRight, ArrowLeftRight, ArrowRight, ArrowUpRight, CalendarDays, Check, ChevronDown, Clock3, ExternalLink,
-  Gauge, Globe2, MapPin, Menu, Moon, Radio, RefreshCw, Route as RouteIcon, Search, ShieldCheck, Sun,
+  Gauge, Globe2, Github, MapPin, Menu, Moon, Radio, RefreshCw, Route as RouteIcon, Search, ShieldCheck, Sun,
   Ticket, TrainFront, Wifi, WifiOff, X, Zap,
 } from 'lucide-react';
 import './style.css';
@@ -61,7 +61,7 @@ function Brand({ onClick }) {
   return (
     <a className="brand" href="#top" onClick={onClick} aria-label="Rail and Route home">
       <span className="brand-mark"><TrainFront size={23} strokeWidth={1.65} /></span>
-      <span className="brand-copy"><span className="brand-name">RAIL <i>&</i> ROUTE</span><span className="brand-tagline">INDIAN RAILWAY ENQUIRY</span></span>
+      <span className="brand-copy"><span className="brand-name">RAIL <i>&</i> ROUTE</span><span className="brand-tagline">TRAIN STATUS &amp; JOURNEYS</span></span>
     </a>
   );
 }
@@ -74,8 +74,18 @@ function StatusResult({ result, mode, onRefresh, refreshing }) {
   const route = Array.isArray(data.route) ? data.route : [];
   const previous = data.previousHalt || null;
   const next = data.nextHalt || null;
-  const routeCurrentCode = current.stationCode || '';
-  const routeCurrentIndex = route.findIndex((stop) => stop.stationCode === routeCurrentCode);
+  const routeCurrentCode = String(current.stationCode || '').toUpperCase();
+  const routeCurrentIndex = route.findIndex((stop) => String(stop.stationCode || stop.station?.code || stop.code || '').toUpperCase() === routeCurrentCode);
+  const hasReportedRoutePosition = route.length > 1 && routeCurrentCode.length > 0 && routeCurrentIndex >= 0;
+  const rawSegmentProgress = current.segmentProgress;
+  const normalizedSegmentProgress = typeof rawSegmentProgress === 'number' && Number.isFinite(rawSegmentProgress) && rawSegmentProgress >= 0 && rawSegmentProgress <= 1 && routeCurrentIndex < route.length - 1 ? rawSegmentProgress : null;
+  const routeProgressPercent = hasReportedRoutePosition
+    ? Math.max(0, Math.min(100, ((routeCurrentIndex + (normalizedSegmentProgress ?? 0)) / (route.length - 1)) * 100))
+    : null;
+  const reportedStationName = current.stationName || route[routeCurrentIndex]?.stationName || routeCurrentCode;
+  const routePositionLabel = hasReportedRoutePosition
+    ? `${reportedStationName} · ${normalizedSegmentProgress !== null ? `${Math.round(normalizedSegmentProgress * 100)}% through next segment` : `stop ${routeCurrentIndex + 1} of ${route.length}`}`
+    : 'Provider has not matched a reported station to this route';
   const safeRoute = route.length > 8 ? route.slice(Math.max(0, routeCurrentIndex - 2), Math.max(8, routeCurrentIndex + 5)) : route;
   const isStale = mode === 'device-cache' || mode === 'edge-cache';
   const statusText = (data.status || 'status unavailable').replaceAll('-', ' ');
@@ -106,10 +116,13 @@ function StatusResult({ result, mode, onRefresh, refreshing }) {
           <strong>{train.source?.name || route[0]?.stationName || 'Origin'}</strong>
           <span>{route[0]?.scheduledDeparture ? `Dep. ${niceClock(route[0].scheduledDeparture)}` : 'Origin station'}</span>
         </div>
-        <div className="journey-track" aria-label="Route progress">
-          <div className="track-trackline"><span style={{ width: `${Math.max(4, Math.min(100, Number(current.segmentProgress || 0) * 100))}%` }} /></div>
-          <span className="track-train"><TrainFront size={17} /></span>
-          <span className="track-progress">{typeof current.segmentProgress === 'number' ? `${Math.round(current.segmentProgress * 100)}% of segment` : 'Journey in progress'}</span>
+        <div className="journey-track" aria-label={hasReportedRoutePosition ? `Reported train position near ${reportedStationName}` : 'Live train position unavailable for the listed route'}>
+          <div className="track-trackline">
+            <span className="track-trackline-progress" style={{ width: `${routeProgressPercent ?? 0}%` }} />
+            {hasReportedRoutePosition && <span className="track-train" style={{ left: `${routeProgressPercent}%` }} title={`Provider-reported position: ${reportedStationName}`}><TrainFront size={15} aria-hidden="true" /></span>}
+          </div>
+          <span className="track-progress">{routePositionLabel}</span>
+          <span className="track-position-note">Marker follows the provider-reported station/segment, not continuous GPS.</span>
         </div>
         <div className="journey-place place-destination">
           <span className="journey-code">{train.destination?.code || route[route.length - 1]?.stationCode || '—'}</span>
@@ -127,7 +140,7 @@ function StatusResult({ result, mode, onRefresh, refreshing }) {
           <div className="route-stops-heading"><span>Route timeline</span><span>{route.length} reported stops</span></div>
           <div className="stops-list">
             {safeRoute.map((stop, index) => {
-              const active = stop.stationCode === routeCurrentCode;
+              const active = String(stop.stationCode || stop.station?.code || stop.code || '').toUpperCase() === routeCurrentCode;
               const stopDelay = typeof stop.delayArrival === 'number' ? stop.delayArrival : stop.delayDeparture;
               return <div className={`stop-row ${active ? 'active' : ''}`} key={`${stop.sequence || index}-${stop.stationCode}`}>
                 <span className="stop-marker" />
@@ -259,23 +272,12 @@ function JourneySchedule({ schedule, fromCode, toCode, retrievedAt, syncCheckedA
   if (fromIndex < 0) fromIndex = 0;
   if (toIndex < 0 || toIndex < fromIndex) toIndex = allStops.length - 1;
   const stops = allStops.slice(fromIndex, toIndex + 1);
-  const markerIndices = [...new Set([0, Math.round((stops.length - 1) * 0.25), Math.round((stops.length - 1) * 0.5), Math.round((stops.length - 1) * 0.75), stops.length - 1])];
 
   return (
     <div className="journey-schedule reveal">
       <div className="journey-schedule-top">
         <div><p className="eyebrow">FULL SCHEDULE</p><h4>{schedule.train?.name || 'Train route'}</h4><p>{schedule.train?.number || ''} <span>·</span> {schedule.train?.type || schedule.train?.category || 'Train service'}</p></div>
         <div className="schedule-summary"><strong>{schedule.train?.distance != null && schedule.train.distance !== '' && Number.isFinite(Number(schedule.train.distance)) ? `${Math.round(Number(schedule.train.distance))} km` : `${stops.length} listed stops`}</strong><small>{schedule.train?.duration != null && schedule.train.duration !== '' && Number.isFinite(Number(schedule.train.duration)) ? formatDuration(schedule.train.duration) : 'Scheduled journey'}</small></div>
-      </div>
-
-      <div className="journey-route-visual" aria-label="Animated illustrative train route. The animation does not show real-time train position.">
-        <div className="route-visual-labels"><span><small>FROM</small><strong>{routeStopCode(stops[0]) || fromCode}</strong></span><span><small>TO</small><strong>{routeStopCode(stops[stops.length - 1]) || toCode}</strong></span></div>
-        <div className="route-visual-track">
-          <span className="route-track-base"/><span className="route-track-fill"/>
-          <span className="route-train-glide" aria-hidden="true"><TrainFront size={20}/></span>
-          {markerIndices.map((index) => <span key={`${index}-${routeStopCode(stops[index])}`} className="route-track-stop" style={{ left: `${stops.length <= 1 ? 0 : (index / (stops.length - 1)) * 100}%` }} />)}
-        </div>
-        <p className="route-visual-note"><RouteIcon size={13}/> Decorative route animation · not live GPS</p>
       </div>
 
       <div className="schedule-stops-heading"><span>STATION-BY-STATION</span><span>{stops.length} stops in selected journey</span></div>
@@ -546,7 +548,7 @@ function App() {
 
   return (
     <div className={`site-shell ${dark ? 'theme-dark' : ''}`} id="top">
-      <div className="announcement-bar"><span className="announcement-dot" /> A thoughtful independent student project <span className="announcement-divider">·</span> Not affiliated with Indian Railways or IRCTC</div>
+      <div className="announcement-bar"><span className="announcement-dot" /> LIVE TRAIN STATUS <span className="announcement-divider">·</span> TIMETABLES <span className="announcement-divider">·</span> JOURNEY PLANNING</div>
       <header className="site-header wrap">
         <Brand />
         <nav className={`main-nav ${menuOpen ? 'nav-open' : ''}`} aria-label="Main navigation">
@@ -604,7 +606,7 @@ function App() {
           <div className="wrap journey-explorer-wrap">
             <div className="journey-explorer-heading">
               <div><p className="eyebrow"><span className="eyebrow-line"/> JOURNEY EXPLORER</p><h2>From here,<br/><em>to somewhere.</em></h2></div>
-              <p>Compare trains between stations, then open a full timetable and follow the route with an animated station-by-station view.</p>
+              <p>Compare trains between stations, then open a full timetable and open a station-by-station scheduled timetable.</p>
             </div>
             <form className="journey-search-card" onSubmit={searchJourneys}>
               <div className="journey-search-card-head"><div><span className="card-kicker">PLAN A JOURNEY</span><h3>Where would you like to go?</h3></div><div className="journey-card-icon"><RouteIcon size={22}/></div></div>
@@ -618,7 +620,7 @@ function App() {
             </form>
             {journeyNotice && <div className={`notice notice-${journeyNotice.kind}`} role="status"><span>{journeyNotice.kind === 'stale' ? <Clock3 size={17}/> : journeyNotice.kind === 'info' ? <Check size={17}/> : <WifiOff size={17}/>}</span><p>{journeyNotice.text}</p></div>}
             {journeyResult && <JourneyResults result={journeyResult} mode={journeyMode} selectedTrainNumber={selectedTrainNumber} schedulesByTrain={schedulesByTrain} scheduleLoadingNumber={scheduleLoadingNumber} scheduleErrors={scheduleErrors} onToggleSchedule={toggleSchedule} onRefresh={() => searchJourneys()}/>}
-            <div className="journey-static-note"><RouteIcon size={16}/><p>Route animation is illustrative, not a live train position. Scheduled times can change; verify important travel details with official railway sources.</p></div>
+            <div className="journey-static-note"><RouteIcon size={16}/><p>This is a scheduled timetable, not live train movement. Current position and delays are shown only in Live Status when supplied by the provider. Verify important travel details with official railway sources.</p></div>
           </div>
         </section>
 
@@ -644,12 +646,11 @@ function App() {
 
       <footer className="site-footer">
         <div className="footer-main wrap">
-          <div className="footer-brand-column"><Brand/><p>A student-built, independent train information website. Designed to make the journey easier to understand.</p><span className="footer-disclaimer">Not affiliated with Indian Railways, IRCTC or CRIS.</span></div>
+          <div className="footer-brand-column"><Brand/><p>Train running status, scheduled routes and journey planning across India.</p><span className="footer-disclaimer">Independent service; not affiliated with Indian Railways, IRCTC or CRIS.</span></div>
           <div className="footer-links"><h4>Explore</h4><a href="#live-search">Live train status</a><a href="#journey-explorer">Journey explorer</a><a href={OFFICIAL_PNR_URL} target="_blank" rel="noreferrer noopener">Official PNR enquiry <ExternalLink size={12}/></a></div>
           <div className="footer-links"><h4>Trust & privacy</h4><a href="/privacy.html">Privacy & data transparency <ArrowUpRight size={12}/></a><a href="/privacy.html#data-sources">Data sources</a><a href="/privacy.html#limits">Service limitations</a></div>
-          <div className="footer-status"><span className="footer-status-mark"><ShieldCheck size={18}/></span><strong>Built with transparency.</strong><p>Live results depend on third-party data availability. We label stale or unavailable information.</p><span className="status-small"><span className="live-dot"/> Privacy-first by design</span></div>
         </div>
-        <div className="footer-bottom wrap"><span>© {new Date().getFullYear()} Rail & Route · Working project name</span><span>Made for journeys across India <span className="footer-star">✳</span></span><a href="#top">Back to top ↑</a></div>
+        <div className="footer-bottom wrap"><span>© {new Date().getFullYear()} Rail &amp; Route</span><a className="footer-github-link" href="https://github.com/himanvic" target="_blank" rel="noreferrer noopener" aria-label="Open GitHub profile"><Github size={14} aria-hidden="true"/> GitHub</a><a href="#top">Back to top ↑</a></div>
       </footer>
     </div>
   );

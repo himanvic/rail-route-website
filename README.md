@@ -9,10 +9,10 @@ A premium, privacy-aware website starter designed for a private GitHub source re
 ## Features included
 
 - Ivory, obsidian black, silver, champagne gold and bronze visual system.
-- Responsive homepage with railway hero image, subtle train/route animations, light/dark appearance toggle and mobile navigation.
+- Responsive homepage with railway hero image, restrained transitions, light/dark appearance toggle and mobile navigation. In Live Status, the route marker moves only when a provider-reported position changes; scheduled Journey Explorer routes are static.
 - Live train status form using a five-digit train number and optional journey date.
 - Journey Explorer uses a locally hosted, compact scheduled-timetable catalogue for station autocomplete, station-to-station search, operating days, departure/arrival times, distance and full route schedules. These searches do not call RailRadar or consume its monthly API quota.
-- Expand a train card to load a static schedule shard, highlight the requested route section, and view an animated route-line preview explicitly labelled as illustrative rather than live GPS.
+- Expand a train card to load a static schedule shard, highlight the requested route section, and inspect a static station-by-station schedule. Scheduled routes do not show a pretend moving train because timetable data is not live position data.
 - Daily GitHub Actions job checks the community timetable snapshot upstream, builds compact sharded JSON files, records both the sync-check time and upstream data revision date, and commits changed data to trigger a Cloudflare Pages deployment.
 - Cloudflare Pages Function proxy to the RailRadar live-status endpoint.
 - API credential read from a Cloudflare **Secret**, never from the browser bundle.
@@ -149,7 +149,7 @@ The external official service has its own terms and privacy practices. The proje
 
 Station suggestions are filtered from the locally hosted stations catalogue. The station-to-station search intersects local stop indexes and loads compact schedule shards on demand. These operations do not call RailRadar. Visitors can type a station code (e.g. `NDLS`, `HWH`, `MMCT`) directly when suggestions are unavailable.
 
-The full timetable snapshot is checked daily by GitHub Actions against its upstream dataset source. The `syncCheckedAt` date means we checked the source; `sourceDataCommitAt` records the latest upstream commit touching the timetable files when available. Neither date guarantees a train operator changed or verified the schedule that day. The moving locomotive on the route line is a visual animation only; it does not indicate live GPS position. The source snapshot may contain errors or omissions, so verify important travel details with official railway sources. Train locations and delays are shown only in the separate live-status response when supplied by the provider.
+The full timetable snapshot is checked daily by GitHub Actions against its upstream dataset source. The `syncCheckedAt` date means we checked the source; `sourceDataCommitAt` records the latest upstream commit touching the timetable files when available. Neither date guarantees a train operator changed or verified the schedule that day. In Live Status, the marker transitions to the provider-reported station or segment progress when available; it does not free-run or represent continuous GPS. Scheduled Journey Explorer routes use a static timeline. The source snapshot may contain errors or omissions, so verify important travel details with official railway sources. Train locations and delays are shown only in the separate live-status response when supplied by the provider.
 
 ## Project structure
 
