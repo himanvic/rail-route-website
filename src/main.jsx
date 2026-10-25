@@ -87,21 +87,22 @@ function delayLabel(value) {
   return 'STATUS UNAVAILABLE';
 }
 
-function stopTimePresentation(stop) {
+function stopDelayValue(stop) {
+  if (typeof stop?.delayArrival === 'number' && Number.isFinite(stop.delayArrival)) return stop.delayArrival;
+  if (typeof stop?.delayDeparture === 'number' && Number.isFinite(stop.delayDeparture)) return stop.delayDeparture;
+  return null;
+}
+
+function stopTimePresentation(stop, fallbackDelay = null, isUpcoming = false) {
   const usesArrival = Boolean(stop.scheduledArrival || stop.actualArrival);
   const scheduled = (usesArrival ? stop.scheduledArrival : stop.scheduledDeparture)
     || stop.scheduledArrival || stop.scheduledDeparture || null;
   const actual = usesArrival
     ? (stop.actualArrival || (!stop.scheduledArrival ? stop.actualDeparture : null) || null)
     : (stop.actualDeparture || (!stop.scheduledDeparture ? stop.actualArrival : null) || null);
-  let delay = usesArrival ? stop.delayArrival : stop.delayDeparture;
-  if (typeof delay !== 'number' || !Number.isFinite(delay)) {
-    delay = typeof stop.delayArrival === 'number' && Number.isFinite(stop.delayArrival)
-      ? stop.delayArrival
-      : typeof stop.delayDeparture === 'number' && Number.isFinite(stop.delayDeparture)
-        ? stop.delayDeparture
-        : null;
-  }
+  const explicitDelay = stopDelayValue(stop);
+  const usesFallbackDelay = explicitDelay === null && isUpcoming && typeof fallbackDelay === 'number' && Number.isFinite(fallbackDelay);
+  const delay = explicitDelay !== null ? explicitDelay : usesFallbackDelay ? fallbackDelay : null;
   const state = delayState(delay);
   const hasActual = Boolean(actual);
   const hasEstimate = !hasActual && Boolean(scheduled) && typeof delay === 'number';
@@ -109,10 +110,12 @@ function stopTimePresentation(stop) {
   const detail = hasActual
     ? `ACTUAL · SCHED ${niceClock(scheduled)}`
     : hasEstimate
-      ? `EST. · SCHED ${niceClock(scheduled)}`
+      ? `${usesFallbackDelay ? 'EST. FROM CURRENT DELAY' : 'EST.'} · SCHED ${niceClock(scheduled)}`
       : 'SCHEDULED TIME';
-  const statusLabel = state === 'unknown' ? (hasActual ? 'REPORTED' : 'SCHEDULED') : delayLabel(delay);
-  return { displayTime, detail, state, statusLabel };
+  const statusLabel = hasEstimate
+    ? `EST. ${delayLabel(delay)}`
+    : state === 'unknown' ? (hasActual ? 'REPORTED' : 'SCHEDULED') : delayLabel(delay);
+  return { displayTime, detail, state, statusLabel, hasActual, hasEstimate, usesFallbackDelay };
 }
 
 function getStoredStatus(trainNumber) {
@@ -167,20 +170,18 @@ function StatusResult({ result, mode, onRefresh, refreshing }) {
   const [deviceGps, setDeviceGps] = useState(null);
   const [nearestRouteStop, setNearestRouteStop] = useState(null);
   const [gpsMessage, setGpsMessage] = useState('');
-  React.useEffect(() => {
-    setGpsState('idle');
-    setDeviceGps(null);
-    setNearestRouteStop(null);
-    setGpsMessage('');
-  }, [resultTrainKey]);
-  if (!data) return null;
-  const train = data.train || {};
-  const current = data.currentLocation || {};
-  const route = Array.isArray(data.route) ? data.route : [];
-  const previous = data.previousHalt || null;
-  const next = data.nextHalt || null;
+  const [trainGraphic, setTrainGraphic] = useState(null);
+  const resultPanelRef = useRef(null);
+  const stopsListRef = useRef(null);
+  const activeStopRef = useRef(null);
+
+  const train = data?.train || {};
+  const current = data?.currentLocation || {};
+  const route = Array.isArray(data?.route) ? data.route : [];
+  const previous = data?.previousHalt || null;
+  const next = data?.nextHalt || null;
   const routeCurrentCode = String(current.stationCode || '').toUpperCase();
-  const routeCurrentIndex = route.findIndex((stop) => String(stop.stationCode || stop.station?.code || stop.code || '').toUpperCase() === routeCurrentCode);
+  const routeCurrentIndex = route.findIndex((stop) => routeStopCode(stop) === routeCurrentCode);
   const hasReportedRoutePosition = route.length > 1 && routeCurrentCode.length > 0 && routeCurrentIndex >= 0;
   const rawSegmentProgress = current.segmentProgress;
   const normalizedSegmentProgress = typeof rawSegmentProgress === 'number' && Number.isFinite(rawSegmentProgress) && rawSegmentProgress >= 0 && rawSegmentProgress <= 1 && routeCurrentIndex < route.length - 1 ? rawSegmentProgress : null;
@@ -191,10 +192,78 @@ function StatusResult({ result, mode, onRefresh, refreshing }) {
   const routePositionLabel = hasReportedRoutePosition
     ? `${reportedStationName} · ${normalizedSegmentProgress !== null ? `${Math.round(normalizedSegmentProgress * 100)}% through next segment` : `stop ${routeCurrentIndex + 1} of ${route.length}`}`
     : 'Provider has not matched a reported station to this route';
-  const safeRoute = route; // Render every station returned by the provider, from origin to destination.
+  const safeRoute = route;
   const isStale = mode === 'device-cache' || mode === 'edge-cache';
-  const statusText = (data.status || 'status unavailable').replaceAll('-', ' ');
+  const statusText = String(data?.status || 'status unavailable').replaceAll('-', ' ');
+  const currentDelayMinutes = [data?.delayMinutes, current?.delayMinutes, current?.delay?.minutes]
+    .find((value) => typeof value === 'number' && Number.isFinite(value));
+  const hasEstimatedUpcomingStops = hasReportedRoutePosition && typeof currentDelayMinutes === 'number' && safeRoute
+    .slice(routeCurrentIndex + 1)
+    .some((stop) => {
+      const scheduled = stop.scheduledArrival || stop.scheduledDeparture;
+      const actual = stop.actualArrival || stop.actualDeparture;
+      return Boolean(scheduled && !actual && stopDelayValue(stop) === null);
+    });
 
+  React.useEffect(() => {
+    setGpsState('idle');
+    setDeviceGps(null);
+    setNearestRouteStop(null);
+    setGpsMessage('');
+  }, [resultTrainKey]);
+
+  // After a successful live lookup or refresh, move the page to the station the provider last reported.
+  // If the provider cannot match a station to the route, bring the result panel into view instead.
+  React.useEffect(() => {
+    if (!data || !result?.retrievedAt) return undefined;
+    const timer = window.setTimeout(() => {
+      const target = activeStopRef.current || resultPanelRef.current;
+      target?.scrollIntoView({ behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: activeStopRef.current ? 'center' : 'start' });
+    }, 320);
+    return () => window.clearTimeout(timer);
+  }, [result?.retrievedAt, resultTrainKey, data]);
+
+  // Position the small vertical train set at the last provider-reported station/segment.
+  // CSS only animates between reports; it does not fabricate continuous GPS movement.
+  React.useEffect(() => {
+    const list = stopsListRef.current;
+    const active = activeStopRef.current;
+    if (!data || !hasReportedRoutePosition || !list || !active) {
+      setTrainGraphic(null);
+      return undefined;
+    }
+    const updatePosition = () => {
+      const listRect = list.getBoundingClientRect();
+      const activeRect = active.getBoundingClientRect();
+      let center = activeRect.top - listRect.top + activeRect.height / 2;
+      if (normalizedSegmentProgress !== null && routeCurrentIndex < route.length - 1) {
+        const nextRow = list.querySelectorAll('.stop-row')[routeCurrentIndex + 1];
+        if (nextRow) {
+          const nextRect = nextRow.getBoundingClientRect();
+          const nextCenter = nextRect.top - listRect.top + nextRect.height / 2;
+          center += (nextCenter - center) * normalizedSegmentProgress;
+        }
+      }
+      const engineCenter = 10;
+      const engineCenterFromTop = 49;
+      const trailDown = center < engineCenterFromTop + 4;
+      const top = trailDown ? Math.max(0, center - engineCenter) : Math.max(0, center - engineCenterFromTop);
+      setTrainGraphic({ top, progress: Math.max(0, center), trailDown });
+    };
+    updatePosition();
+    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(updatePosition) : null;
+    if (observer) {
+      observer.observe(list);
+      observer.observe(active);
+    }
+    window.addEventListener('resize', updatePosition);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', updatePosition);
+    };
+  }, [data, result?.retrievedAt, resultTrainKey, hasReportedRoutePosition, routeCurrentIndex, route.length, normalizedSegmentProgress]);
+
+  if (!data) return null;
   function checkDeviceGps() {
     if (!('geolocation' in navigator)) {
       setGpsState('error');
@@ -253,7 +322,7 @@ function StatusResult({ result, mode, onRefresh, refreshing }) {
   }
 
   return (
-    <section className={`result-panel reveal ${isStale ? 'is-stale' : ''}`} aria-live="polite">
+    <section ref={resultPanelRef} className={`result-panel reveal ${isStale ? 'is-stale' : ''}`} aria-live="polite">
       <div className="result-topline">
         <div className="result-source"><span className={`live-dot ${isStale ? 'dot-muted' : ''}`} />
           <span>{isStale ? 'Last known status' : 'Live result'}</span>
@@ -281,10 +350,9 @@ function StatusResult({ result, mode, onRefresh, refreshing }) {
         <div className="journey-track" aria-label={hasReportedRoutePosition ? `Reported train position near ${reportedStationName}` : 'Live train position unavailable for the listed route'}>
           <div className="track-trackline">
             <span className="track-trackline-progress" style={{ width: `${routeProgressPercent ?? 0}%` }} />
-            {hasReportedRoutePosition && <span className="track-train" style={{ left: `${routeProgressPercent}%` }} title={`Provider-reported position: ${reportedStationName}`}><TrainFront size={15} aria-hidden="true" /></span>}
           </div>
           <span className="track-progress">{routePositionLabel}</span>
-          <span className="track-position-note">Marker follows the provider-reported station/segment, not continuous GPS.</span>
+          <span className="track-position-note">The vertical train below marks the latest provider-reported route position.</span>
         </div>
         <div className="journey-place place-destination">
           <span className="journey-code">{train.destination?.code || route[route.length - 1]?.stationCode || '—'}</span>
@@ -320,13 +388,26 @@ function StatusResult({ result, mode, onRefresh, refreshing }) {
       {safeRoute.length > 0 && (
         <div className="route-stops">
           <div className="route-stops-heading"><span>Full route timeline</span><span>{route.length} stops · origin to destination</span></div>
-          <div className="stops-list">
+          {hasReportedRoutePosition && <div className="route-motion-note"><TrainFront size={14} aria-hidden="true"/><span>The vertical train marks the provider's last reported position. It moves to a new position only when updated data arrives.</span></div>}
+          {hasEstimatedUpcomingStops && <div className="route-estimate-note"><Clock3 size={13} aria-hidden="true"/><span>Upcoming times marked EST. carry forward the latest reported delay as a guide; actual delays may change.</span></div>}
+          <div className="stops-list vertical-train-timeline" ref={stopsListRef}>
+            {hasReportedRoutePosition && <div className="vertical-train-layer" aria-hidden="true">
+              <span className="vertical-track-sleepers" />
+              <span className="vertical-track-rails" />
+              <span className="vertical-track-progress" style={{ height: `${trainGraphic?.progress || 0}px` }} />
+              {trainGraphic && <div className={`vertical-train-set ${trainGraphic.trailDown ? 'trail-down' : ''}`} style={{ top: `${trainGraphic.top}px` }}>
+                <span className="route-coach coach-gold"/><span className="route-coach"/><span className="route-coach"/><span className="route-coach"/>
+                <span className="route-engine"><TrainFront size={13} strokeWidth={2.2} aria-hidden="true"/></span>
+              </div>}
+            </div>}
             {safeRoute.map((stop, index) => {
-              const active = String(stop.stationCode || stop.station?.code || stop.code || '').toUpperCase() === routeCurrentCode;
-              const timing = stopTimePresentation(stop);
-              return <div className={`stop-row ${active ? 'active' : ''}`} key={`${stop.sequence || index}-${stop.stationCode}`}>
+              const active = routeStopCode(stop) === routeCurrentCode;
+              const upcoming = hasReportedRoutePosition && index > routeCurrentIndex;
+              const timing = stopTimePresentation(stop, currentDelayMinutes, upcoming);
+              const stationName = routeStopName(stop);
+              return <div ref={active ? activeStopRef : null} className={`stop-row ${active ? 'active' : ''} ${timing.hasEstimate ? 'estimated' : ''}`} key={`${stop.sequence || index}-${routeStopCode(stop)}`}>
                 <span className="stop-marker" />
-                <div className="stop-name"><strong>{stop.stationName || stop.stationCode}</strong><small>{stop.stationCode || 'Station code unavailable'}</small></div>
+                <div className="stop-name"><strong>{stationName}</strong><small>{routeStopCode(stop) || 'Station code unavailable'}</small></div>
                 <div className="stop-time">
                   <strong className={`stop-time-clock delay-${timing.state}`}>{timing.displayTime}</strong>
                   <small className={`stop-time-status delay-${timing.state}`}>{timing.statusLabel}</small>
