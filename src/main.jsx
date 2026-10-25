@@ -6,7 +6,7 @@ import {
   Ticket, TrainFront, Wifi, WifiOff, X, Zap,
 } from 'lucide-react';
 import './style.css';
-import { getStaticTrainSchedule, searchStaticStations, searchStaticTrainsBetween } from './lib/static-timetable.js';
+import { getStaticStations, getStaticTrainSchedule, searchStaticStations, searchStaticTrainsBetween } from './lib/static-timetable.js';
 
 const OFFICIAL_PNR_URL = 'https://www.indianrail.gov.in/enquiry/PNR/PnrEnquiry.html';
 const LAST_STATUS_KEY = 'rail-route:last-train-status:v1';
@@ -125,6 +125,28 @@ function getStoredStatus(trainNumber) {
   return null;
 }
 
+function stationCoordinates(record) {
+  if (!record || typeof record !== 'object') return null;
+  const nested = record.coordinates || record.station?.coordinates || record.location || record.station?.location || {};
+  const rawLat = nested.latitude ?? nested.lat ?? record.latitude ?? record.lat ?? record.station?.latitude ?? record.station?.lat;
+  const rawLon = nested.longitude ?? nested.lon ?? nested.lng ?? record.longitude ?? record.lon ?? record.lng ?? record.station?.longitude ?? record.station?.lon ?? record.station?.lng;
+  if (rawLat == null || rawLat === '' || rawLon == null || rawLon === '') return null;
+  const latitude = Number(rawLat);
+  const longitude = Number(rawLon);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) return null;
+  return { latitude, longitude };
+}
+
+function distanceKm(a, b) {
+  const radians = (degrees) => degrees * Math.PI / 180;
+  const dLat = radians(b.latitude - a.latitude);
+  const dLon = radians(b.longitude - a.longitude);
+  const lat1 = radians(a.latitude);
+  const lat2 = radians(b.latitude);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+  return 6371 * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(Math.max(0, 1 - h)));
+}
+
 function IconText({ icon: Icon, children, className = '' }) {
   return <span className={`icon-text ${className}`}><Icon size={16} strokeWidth={1.8} aria-hidden="true" />{children}</span>;
 }
@@ -140,6 +162,17 @@ function Brand({ onClick }) {
 
 function StatusResult({ result, mode, onRefresh, refreshing }) {
   const data = result?.data;
+  const resultTrainKey = String(result?.trainNumber || data?.trainNumber || data?.train?.number || '');
+  const [gpsState, setGpsState] = useState('idle');
+  const [deviceGps, setDeviceGps] = useState(null);
+  const [nearestRouteStop, setNearestRouteStop] = useState(null);
+  const [gpsMessage, setGpsMessage] = useState('');
+  React.useEffect(() => {
+    setGpsState('idle');
+    setDeviceGps(null);
+    setNearestRouteStop(null);
+    setGpsMessage('');
+  }, [resultTrainKey]);
   if (!data) return null;
   const train = data.train || {};
   const current = data.currentLocation || {};
@@ -158,9 +191,66 @@ function StatusResult({ result, mode, onRefresh, refreshing }) {
   const routePositionLabel = hasReportedRoutePosition
     ? `${reportedStationName} · ${normalizedSegmentProgress !== null ? `${Math.round(normalizedSegmentProgress * 100)}% through next segment` : `stop ${routeCurrentIndex + 1} of ${route.length}`}`
     : 'Provider has not matched a reported station to this route';
-  const safeRoute = route.length > 8 ? route.slice(Math.max(0, routeCurrentIndex - 2), Math.max(8, routeCurrentIndex + 5)) : route;
+  const safeRoute = route; // Render every station returned by the provider, from origin to destination.
   const isStale = mode === 'device-cache' || mode === 'edge-cache';
   const statusText = (data.status || 'status unavailable').replaceAll('-', ' ');
+
+  function checkDeviceGps() {
+    if (!('geolocation' in navigator)) {
+      setGpsState('error');
+      setGpsMessage('This browser does not support device location. Try a current browser on HTTPS.');
+      return;
+    }
+    setGpsState('loading');
+    setGpsMessage('Requesting a one-time location permission from your browser…');
+    setDeviceGps(null);
+    setNearestRouteStop(null);
+    navigator.geolocation.getCurrentPosition(async (position) => {
+      const point = {
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+        accuracy: Number.isFinite(position.coords.accuracy) ? position.coords.accuracy : null,
+        capturedAt: new Date(position.timestamp || Date.now()).toISOString(),
+      };
+      setDeviceGps(point);
+      try {
+        // This reads the site's own static station catalogue. It does not call RailRadar.
+        const stationRows = await getStaticStations();
+        const stationByCode = new Map(stationRows.map((station) => [String(station.code || '').toUpperCase(), station]));
+        const candidates = route.map((stop) => {
+          const code = routeStopCode(stop);
+          const localStation = stationByCode.get(code);
+          const coords = stationCoordinates(stop) || stationCoordinates(stop?.station) || stationCoordinates(localStation);
+          return { code, name: routeStopName(stop), coords };
+        }).filter((stop) => stop.code && stop.coords);
+        if (!candidates.length) {
+          setNearestRouteStop(null);
+          setGpsMessage('Your device location was read locally, but this route has no usable station coordinates in the available timetable data. No API request was made.');
+          setGpsState('ready');
+          return;
+        }
+        const nearest = candidates.map((stop) => ({ ...stop, distanceKm: distanceKm(point, stop.coords) }))
+          .sort((a, b) => a.distanceKm - b.distanceKm)[0];
+        setNearestRouteStop(nearest);
+        setGpsMessage('Device location checked locally against station coordinates. This does not confirm the train’s actual position or delay.');
+        setGpsState('ready');
+      } catch {
+        setNearestRouteStop(null);
+        setGpsMessage('Your device location is available, but the local station catalogue could not be read. No RailRadar request was made.');
+        setGpsState('ready');
+      }
+    }, (error) => {
+      const message = error?.code === 1
+        ? 'Location permission was denied. You can allow it in your browser site settings and try again.'
+        : error?.code === 2
+          ? 'Your device could not determine a location. Try again where GPS reception is better.'
+          : error?.code === 3
+            ? 'The location request timed out. Try again when your device has a clearer GPS signal.'
+            : 'Your device location is unavailable. Check browser permissions and try again.';
+      setGpsState('error');
+      setGpsMessage(message);
+    }, { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 });
+  }
 
   return (
     <section className={`result-panel reveal ${isStale ? 'is-stale' : ''}`} aria-live="polite">
@@ -207,9 +297,29 @@ function StatusResult({ result, mode, onRefresh, refreshing }) {
         <div className="metric"><span>Next halt</span><strong>{next?.stationName || next?.stationCode || 'Not supplied'}</strong><small>{typeof next?.distance === 'number' ? `${next.distance} km from previous halt` : 'Distance not supplied'}</small></div>
         <div className="metric"><span>Reported speed</span><strong>{typeof current.speedKmh === 'number' ? `${Math.round(current.speedKmh)} km/h` : '—'}</strong><small>Only when provider supplies it</small></div>
       </div>
+      <section className="device-gps-panel" aria-labelledby="device-gps-heading">
+        <div className="device-gps-copy">
+          <p className="eyebrow"><MapPin size={13} aria-hidden="true"/> ON-DEVICE GPS · NO API CALL</p>
+          <h3 id="device-gps-heading">Compare your location with this route</h3>
+          <p>Your phone's location is not the train's location. We compare it locally with station coordinates when available; it cannot confirm train movement or delay.</p>
+        </div>
+        <button className="button button-outline device-gps-button" type="button" onClick={checkDeviceGps} disabled={gpsState === 'loading'}>
+          {gpsState === 'loading' ? <><span className="button-loader"/> Locating…</> : <><MapPin size={16}/> {gpsState === 'ready' ? 'Refresh my GPS' : 'Use my GPS'}</>}
+        </button>
+        {gpsMessage && <div className={`device-gps-message ${gpsState === 'error' ? 'device-gps-error' : ''}`} role="status">
+          {gpsState === 'loading' ? <span className="button-loader"/> : gpsState === 'error' ? <WifiOff size={15}/> : <ShieldCheck size={15}/>}
+          <span>{gpsMessage}</span>
+        </div>}
+        {deviceGps && <div className="device-gps-result">
+          <div><span>Location accuracy</span><strong>{deviceGps.accuracy != null ? `±${Math.round(deviceGps.accuracy).toLocaleString('en-IN')} m` : 'Not supplied'}</strong></div>
+          <div><span>Location captured</span><strong>{niceDateTime(deviceGps.capturedAt)}</strong></div>
+          {nearestRouteStop ? <div className="device-gps-nearest"><span>Closest station on this train's listed route</span><strong>{nearestRouteStop.name} <small>({nearestRouteStop.code})</small></strong><em>{nearestRouteStop.distanceKm < 1 ? `${Math.round(nearestRouteStop.distanceKm * 1000)} m` : `${nearestRouteStop.distanceKm.toFixed(1)} km`} from your device</em></div> : <div className="device-gps-nearest"><span>Route match</span><strong>Unavailable</strong><em>The local dataset may not include coordinates for these stops.</em></div>}
+        </div>}
+        <p className="device-gps-privacy"><ShieldCheck size={13} aria-hidden="true"/> Location is requested only when you click, kept in this page's memory, and not sent to RailRadar or saved to a database.</p>
+      </section>
       {safeRoute.length > 0 && (
         <div className="route-stops">
-          <div className="route-stops-heading"><span>Route timeline</span><span>{route.length} reported stops</span></div>
+          <div className="route-stops-heading"><span>Full route timeline</span><span>{route.length} stops · origin to destination</span></div>
           <div className="stops-list">
             {safeRoute.map((stop, index) => {
               const active = String(stop.stationCode || stop.station?.code || stop.code || '').toUpperCase() === routeCurrentCode;

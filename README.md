@@ -176,3 +176,52 @@ rail-route-website/
 ├── vite.config.js
 └── wrangler.toml
 ```
+
+# Rail & Route: Exact Time + Color Status Update
+
+This patch updates the live train route timeline to present clock times rather than numeric delay offsets.
+
+## Visual behavior
+
+- Late: red themed time and `LATE` tag.
+- Early: green themed time and `EARLY` tag.
+- On time: green themed time and `ON TIME` tag.
+- Unknown delay: neutral styling, without guessing.
+- When the provider returns actual times, display those. If only a schedule and a reported delay are available, calculate the estimated clock time and label it `EST.` with the scheduled time as context.
+- The top-level status pill also shows `LATE`, `EARLY`, `ON TIME`, or `STATUS UNAVAILABLE` rather than a number of minutes.
+
+Only `src/main.jsx` and `src/style.css` are included. Apply to the existing project; do not replace the repository or any API workflow configuration.
+
+# Rail & Route — GPS + full route timeline update
+
+This patch combines the existing on-device GPS feature, privacy explanation, exact clock-time status styling, and a full live-status route timeline.
+
+## Files included
+
+- `src/main.jsx` — retains GPS support and color-coded actual/estimated station times; removes the route slicing so every stop returned by the provider is rendered from origin to destination.
+- `src/style.css` — retains the current ivory / black / silver / champagne-gold theme, GPS styles, and late/early/on-time colors.
+- `public/privacy.html` — privacy notes for on-device GPS and external live data.
+
+## Apply to your existing repository
+
+1. Make sure you are in your existing `rail-route-website` repo on `feature/live-route-ui` (or the branch for your open Pull Request).
+2. Back up/commit current work before overwriting files.
+3. Extract this ZIP and copy the files inside `rail-route-full-timeline-gps-update` into your project root, preserving folder paths, replacing only the matching files.
+4. Do not replace `.git`, `.dev.vars`, `.gitignore`, package files, `functions/`, `.github/workflows/`, generated timetable files, `vite.config.js`, or `wrangler.toml`.
+5. Run `npm run build`.
+6. Inspect Live Status: it should show the full provider-returned route, from first to last stop. The list may be long and can be scrolled normally; it is no longer truncated to a few stations around the reported location.
+7. Check the `Use my GPS` feature: it asks only after a user click and compares device location with station coordinates locally. Device GPS is not verified train GPS and does not establish delays.
+8. Review the Git diff and run `git status`. Stage and commit on the feature branch; push it and review the existing Pull Request before merging to `main`.
+
+## Behavior and limits
+
+- The Live Status route timeline renders all route stops present in the live provider response. If the API itself returns an incomplete route, the site cannot invent missing stops.
+- Station time shows an actual time when provided, otherwise an estimated time only when a scheduled time and numerical delay exist. Late is red; early and on-time are green; unknown is neutral.
+- No minute-offset label such as `+28m` is displayed in each route row.
+- The GPS button makes no RailRadar request and sends no coordinates to our backend; coordinates are kept in page memory only.
+- This update itself makes no API calls and does not change provider credentials or quota settings.
+- Full route rows are rendered in the page rather than cropped to stations near the current position. Long routes will naturally require scrolling.
+
+## Security
+
+Never commit `.dev.vars` or an API key. Keep your existing secret configuration untouched.
