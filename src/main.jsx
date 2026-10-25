@@ -6,6 +6,7 @@ import {
   Ticket, TrainFront, Wifi, WifiOff, X, Zap,
 } from 'lucide-react';
 import './style.css';
+import { getStaticTrainSchedule, searchStaticStations, searchStaticTrainsBetween } from './lib/static-timetable.js';
 
 const OFFICIAL_PNR_URL = 'https://www.indianrail.gov.in/enquiry/PNR/PnrEnquiry.html';
 const LAST_STATUS_KEY = 'rail-route:last-train-status:v1';
@@ -148,23 +149,13 @@ function useStationSuggestions(query, selected) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const queryCache = useRef(new Map());
 
   React.useEffect(() => {
     let cancelled = false;
     const term = query.trim();
-    const isCode = term === term.toUpperCase() && /^[A-Z0-9]{2,6}$/.test(term);
-    if (selected || term.length < 3 || isCode) {
+    const isCode = term === term.toUpperCase() && /^[A-Z0-9]{2,10}$/.test(term);
+    if (selected || term.length < 2 || isCode) {
       setItems([]);
-      setLoading(false);
-      setError('');
-      return undefined;
-    }
-
-    const cacheKey = term.toLocaleLowerCase();
-    const cached = queryCache.current.get(cacheKey);
-    if (cached) {
-      setItems(cached);
       setLoading(false);
       setError('');
       return undefined;
@@ -174,30 +165,19 @@ function useStationSuggestions(query, selected) {
       setLoading(true);
       setError('');
       try {
-        const response = await fetch(`/api/stations/search?q=${encodeURIComponent(term)}`, {
-          headers: { Accept: 'application/json' },
-          cache: 'no-store',
-        });
-        const body = await response.json().catch(() => ({}));
-        if (!response.ok || body?.success !== true) {
-          throw new Error(body?.error?.message || 'Station suggestions are unavailable.');
-        }
-        const source = Array.isArray(body.data) ? body.data : Array.isArray(body.data?.stations) ? body.data.stations : [];
-        const normalized = source
-          .filter((station) => station && station.code && station.name)
-          .map((station) => ({ code: String(station.code).toUpperCase(), name: String(station.name), city: station.city ? String(station.city) : '' }))
-          .slice(0, 10);
-        queryCache.current.set(cacheKey, normalized);
+        // Station suggestions come from the locally hosted timetable catalogue.
+        // This does not call RailRadar and does not consume its API quota.
+        const normalized = await searchStaticStations(term, 10);
         if (!cancelled) setItems(normalized);
       } catch (requestError) {
         if (!cancelled) {
           setItems([]);
-          setError(requestError?.message || 'Station suggestions are unavailable.');
+          setError(requestError?.message || 'The local station catalogue is unavailable.');
         }
       } finally {
         if (!cancelled) setLoading(false);
       }
-    }, 450);
+    }, 120);
 
     return () => {
       cancelled = true;
@@ -246,7 +226,7 @@ function StationField({ id, label, value, selected, lookup, placeholder, onChang
 }
 
 function formatDuration(minutes) {
-  if (!Number.isFinite(Number(minutes)) || Number(minutes) < 0) return 'Duration unavailable';
+  if (minutes == null || minutes === '' || !Number.isFinite(Number(minutes)) || Number(minutes) < 0) return 'Duration unavailable';
   const total = Math.round(Number(minutes));
   const hours = Math.floor(total / 60);
   const mins = total % 60;
@@ -269,10 +249,10 @@ function routeStopName(stop) {
   return stop?.station?.name || stop?.stationName || stop?.name || routeStopCode(stop) || 'Station';
 }
 
-function JourneySchedule({ schedule, fromCode, toCode, retrievedAt }) {
+function JourneySchedule({ schedule, fromCode, toCode, retrievedAt, syncCheckedAt }) {
   const allStops = Array.isArray(schedule?.route) ? schedule.route : Array.isArray(schedule?.stops) ? schedule.stops : Array.isArray(schedule?.stations) ? schedule.stations : [];
   if (!allStops.length) {
-    return <div className="journey-inline-error">The provider returned train details but no stop-by-stop schedule.</div>;
+    return <div className="journey-inline-error">This timetable record contains no stop-by-stop schedule in the current snapshot.</div>;
   }
   let fromIndex = allStops.findIndex((stop) => routeStopCode(stop) === fromCode);
   let toIndex = allStops.findIndex((stop) => routeStopCode(stop) === toCode);
@@ -285,7 +265,7 @@ function JourneySchedule({ schedule, fromCode, toCode, retrievedAt }) {
     <div className="journey-schedule reveal">
       <div className="journey-schedule-top">
         <div><p className="eyebrow">FULL SCHEDULE</p><h4>{schedule.train?.name || 'Train route'}</h4><p>{schedule.train?.number || ''} <span>·</span> {schedule.train?.type || schedule.train?.category || 'Train service'}</p></div>
-        <div className="schedule-summary"><strong>{Number.isFinite(Number(schedule.train?.distance)) ? `${Math.round(Number(schedule.train.distance))} km` : `${stops.length} listed stops`}</strong><small>{Number.isFinite(Number(schedule.train?.duration)) ? formatDuration(schedule.train.duration) : 'Scheduled journey'}</small></div>
+        <div className="schedule-summary"><strong>{schedule.train?.distance != null && schedule.train.distance !== '' && Number.isFinite(Number(schedule.train.distance)) ? `${Math.round(Number(schedule.train.distance))} km` : `${stops.length} listed stops`}</strong><small>{schedule.train?.duration != null && schedule.train.duration !== '' && Number.isFinite(Number(schedule.train.duration)) ? formatDuration(schedule.train.duration) : 'Scheduled journey'}</small></div>
       </div>
 
       <div className="journey-route-visual" aria-label="Animated illustrative train route. The animation does not show real-time train position.">
@@ -305,20 +285,20 @@ function JourneySchedule({ schedule, fromCode, toCode, retrievedAt }) {
           const departure = stop.departure || stop.scheduledDeparture || null;
           const isFirst = index === 0;
           const isLast = index === stops.length - 1;
-          const distance = Number(stop.distance);
+          const distance = stop.distance == null || stop.distance === '' ? Number.NaN : Number(stop.distance);
           return (
             <div className={`schedule-stop ${isFirst ? 'schedule-stop-origin' : ''} ${isLast ? 'schedule-stop-destination' : ''}`} key={`${stop.sequence || index}-${routeStopCode(stop)}`}>
               <div className="schedule-stop-rail"><span className="schedule-stop-dot"/><span className="schedule-stop-stem"/></div>
               <div className="schedule-stop-details">
                 <div className="schedule-stop-name"><strong>{routeStopName(stop)}</strong><span>{routeStopCode(stop)}</span>{isFirst && <em>BOARD</em>}{isLast && <em>DESTINATION</em>}</div>
                 <div className="schedule-stop-times"><span><small>ARR</small>{arrival || '—'}</span><span><small>DEP</small>{departure || '—'}</span></div>
-                <div className="schedule-stop-meta"><span>{stop.platform ? `Platform ${stop.platform}` : 'Platform not supplied'}</span><span>{Number.isFinite(distance) ? `${distance.toLocaleString('en-IN')} km` : stop.arrivalDay ? `Day ${stop.arrivalDay}` : ''}</span></div>
+                <div className="schedule-stop-meta"><span>{stop.platform ? `Platform ${stop.platform}` : stop.haltMinutes != null && Number.isFinite(Number(stop.haltMinutes)) ? `${Number(stop.haltMinutes)} min halt` : 'Scheduled stop'}</span><span>{Number.isFinite(distance) ? `${distance.toLocaleString('en-IN')} km${Number(stop.arrivalDay) > 1 ? ` · Day ${stop.arrivalDay}` : ''}` : stop.arrivalDay ? `Day ${stop.arrivalDay}` : ''}</span></div>
               </div>
             </div>
           );
         })}
       </div>
-      <div className="schedule-disclaimer"><Clock3 size={14}/> Scheduled timetable, not live arrival tracking. Retrieved {niceDateTime(retrievedAt)}.</div>
+      <div className="schedule-disclaimer"><Clock3 size={14}/> Scheduled timetable snapshot, not live arrival tracking. {retrievedAt ? `Source data revision: ${niceDateTime(retrievedAt)}.` : 'Source data revision date not supplied.'}{syncCheckedAt ? ` Sync checked: ${niceDateTime(syncCheckedAt)}.` : ''} The source may not change every day.</div>
     </div>
   );
 }
@@ -331,11 +311,12 @@ function JourneyResults({ result, mode, selectedTrainNumber, schedulesByTrain, s
   return (
     <section className={`journey-results reveal ${mode === 'device-cache' ? 'journey-results-stale' : ''}`} aria-live="polite">
       <div className="journey-results-heading">
-        <div><p className="eyebrow">JOURNEY OPTIONS</p><h3>{data.from?.name || result.fromName || result.fromCode} <ArrowRight size={17}/> {data.to?.name || result.toName || result.toCode}</h3><p>{result.date ? `Travel date · ${result.date}` : 'Scheduled train options'} <span>·</span> {result.retrievedAt ? `Checked ${niceDateTime(result.retrievedAt)}` : 'Retrieval time unavailable'}</p></div>
+        <div><p className="eyebrow">JOURNEY OPTIONS</p><h3>{data.from?.name || result.fromName || result.fromCode} <ArrowRight size={17}/> {data.to?.name || result.toName || result.toCode}</h3><p>{result.date ? `Travel date · ${result.date}` : 'Scheduled train options'} <span>·</span> {result.cacheMode === 'static' ? (result.retrievedAt ? `Source data revision ${niceDateTime(result.retrievedAt)}` : 'Source data revision date unavailable') : result.retrievedAt ? `Checked ${niceDateTime(result.retrievedAt)}` : 'Retrieval time unavailable'}{result.syncCheckedAt ? ` · Sync checked ${niceDateTime(result.syncCheckedAt)}` : ''}</p></div>
         <button className="icon-button" type="button" onClick={onRefresh} aria-label="Refresh journey search"><RefreshCw size={16}/></button>
       </div>
       {isStale && <div className="journey-data-note"><Clock3 size={15}/> {mode === 'device-cache' ? 'Showing the last journey search stored in this page session after the latest request failed.' : 'This timetable came from the provider’s short-lived edge cache. It is scheduled data, not live running status.'}</div>}
-      <div className="journey-count-row"><strong>{trains.length} {trains.length === 1 ? 'train' : 'trains'} found</strong><span>Scheduled timetable · provider supplied</span></div>
+      {result.cacheMode === 'static' && <div className="journey-data-note"><Check size={15}/> Served from the locally hosted timetable catalogue. No RailRadar request was made for this station-to-station search. The daily job checks the upstream snapshot; it cannot guarantee the source data changes every day.</div>}
+      <div className="journey-count-row"><strong>{trains.length} {trains.length === 1 ? 'train' : 'trains'} found</strong><span>{result.cacheMode === 'static' ? 'Scheduled timetable · local snapshot' : 'Scheduled timetable · provider supplied'}</span></div>
       {trains.length === 0 && <div className="journey-empty"><TrainFront size={24}/><strong>No trains returned for this search.</strong><span>Try another date or check the station codes.</span></div>}
       <div className="journey-train-list">
         {trains.map((item, index) => {
@@ -354,13 +335,13 @@ function JourneyResults({ result, mode, selectedTrainNumber, schedulesByTrain, s
                 <div className="journey-time-bridge"><span>{formatDuration(item.duration)}</span><i/><small>{Number.isFinite(Number(item.totalHaltsBetween)) ? `${item.totalHaltsBetween} halts` : 'Route details available on selection'}</small></div>
                 <div className="journey-time-destination"><strong>{to.arrival || '—'}</strong><span>{data.to?.code || result.toCode}</span><small>{data.to?.name || result.toName || 'Destination station'}</small></div>
               </div>
-              <div className="journey-train-bottom"><div className="journey-train-stats"><span>{Number.isFinite(Number(item.distance)) ? `${Number(item.distance).toLocaleString('en-IN')} km` : 'Distance unavailable'}</span><span>{Number.isFinite(Number(item.duration)) ? formatDuration(item.duration) : 'Duration unavailable'}</span></div><button className="schedule-toggle" type="button" onClick={() => onToggleSchedule(trainNumber)} disabled={!trainNumber || scheduleLoadingNumber === trainNumber}>{scheduleLoadingNumber === trainNumber ? <><span className="button-loader"/> Loading route</> : selected ? <>Hide full route <ChevronDown size={15}/></> : <>View full route <ArrowRight size={15}/></>}</button></div>
-              {selected && <div className="schedule-detail-wrap">{scheduleState ? <JourneySchedule schedule={scheduleState.data} fromCode={result.fromCode} toCode={result.toCode} retrievedAt={scheduleState.retrievedAt}/> : scheduleErrors[trainNumber] ? <div className="journey-inline-error"><WifiOff size={16}/><span>{scheduleErrors[trainNumber]}</span><button type="button" className="text-button" onClick={() => onToggleSchedule(trainNumber, { retry: true })}>Retry</button></div> : <div className="journey-loading"><span className="button-loader"/> Fetching the complete station-by-station schedule…</div>}</div>}
+              <div className="journey-train-bottom"><div className="journey-train-stats"><span>{item.distance != null && item.distance !== '' && Number.isFinite(Number(item.distance)) ? `${Number(item.distance).toLocaleString('en-IN')} km` : 'Distance unavailable'}</span><span>{item.duration != null && item.duration !== '' && Number.isFinite(Number(item.duration)) ? formatDuration(item.duration) : 'Duration unavailable'}</span></div><button className="schedule-toggle" type="button" onClick={() => onToggleSchedule(trainNumber)} disabled={!trainNumber || scheduleLoadingNumber === trainNumber}>{scheduleLoadingNumber === trainNumber ? <><span className="button-loader"/> Loading route</> : selected ? <>Hide full route <ChevronDown size={15}/></> : <>View full route <ArrowRight size={15}/></>}</button></div>
+              {selected && <div className="schedule-detail-wrap">{scheduleState ? <JourneySchedule schedule={scheduleState.data} fromCode={result.fromCode} toCode={result.toCode} retrievedAt={scheduleState.retrievedAt} syncCheckedAt={scheduleState.syncCheckedAt}/> : scheduleErrors[trainNumber] ? <div className="journey-inline-error"><WifiOff size={16}/><span>{scheduleErrors[trainNumber]}</span><button type="button" className="text-button" onClick={() => onToggleSchedule(trainNumber, { retry: true })}>Retry</button></div> : <div className="journey-loading"><span className="button-loader"/> Fetching the complete station-by-station schedule…</div>}</div>}
             </article>
           );
         })}
       </div>
-      <div className="journey-result-note"><ShieldCheck size={14}/> Times and route details are supplied by the configured railway data provider. Check official railway information before travel.</div>
+      <div className="journey-result-note"><ShieldCheck size={14}/> {result.cacheMode === 'static' ? 'Times and route details come from a locally hosted community timetable snapshot, not from live running data.' : 'Times and route details are supplied by the configured railway data provider.'} Check official railway information before travel.</div>
     </section>
   );
 }
@@ -463,11 +444,11 @@ function App() {
     const from = resolvedStation(fromSelected, fromQuery);
     const to = resolvedStation(toSelected, toQuery);
     if (!from) {
-      setJourneyNotice({ kind: 'error', text: 'Choose a source station from the suggestions, or enter its station code directly (for example, HWH).' });
+      setJourneyNotice({ kind: 'error', text: 'Choose a source station from local suggestions, or enter its station code directly (for example, HWH).' });
       return;
     }
     if (!to) {
-      setJourneyNotice({ kind: 'error', text: 'Choose a destination station from the suggestions, or enter its station code directly (for example, NDLS).' });
+      setJourneyNotice({ kind: 'error', text: 'Choose a destination station from local suggestions, or enter its station code directly (for example, NDLS).' });
       return;
     }
     if (from.code === to.code) {
@@ -485,16 +466,9 @@ function App() {
     setSelectedTrainNumber(null);
     setJourneyResult(null);
     try {
-      const query = new URLSearchParams();
-      if (journeySearchDate) query.set('date', journeySearchDate);
-      const suffix = query.size ? `?${query.toString()}` : '';
-      const response = await fetch(`/api/trains/between/${encodeURIComponent(from.code)}/${encodeURIComponent(to.code)}${suffix}`, {
-        headers: { Accept: 'application/json' }, cache: 'no-store',
-      });
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok || body?.success !== true || !body?.data) {
-        throw new Error(body?.error?.message || 'Train search is unavailable. Check the station codes and try again.');
-      }
+      // Station-to-station search uses the locally hosted timetable snapshot.
+      // It does not contact RailRadar or use the 100-request monthly live-status quota.
+      const body = await searchStaticTrainsBetween(from.code, to.code, journeySearchDate);
       const shaped = {
         data: body.data,
         fromCode: from.code,
@@ -502,22 +476,23 @@ function App() {
         fromName: from.name || from.code,
         toName: to.name || to.code,
         date: journeySearchDate,
-        retrievedAt: body.retrievedAt || new Date().toISOString(),
-        providerTimestamp: body.providerTimestamp || null,
-        cacheMode: body.cacheMode || 'live',
+        retrievedAt: body.retrievedAt || null,
+        syncCheckedAt: body.syncCheckedAt || null,
+        sourceDataCommitAt: body.sourceDataCommitAt || null,
+        cacheMode: 'static',
       };
       journeyCache.current.set(cacheKey, shaped);
       setJourneyResult(shaped);
-      setJourneyMode('live');
-      if (body.cacheMode === 'edge') setJourneyNotice({ kind: 'info', text: 'This scheduled timetable was served from a short-lived edge cache to reduce external API requests.' });
+      setJourneyMode('static');
+      setJourneyNotice({ kind: 'info', text: `Searched the local timetable snapshot. No RailRadar API request was used. Snapshot sync checked ${niceDateTime(body.syncCheckedAt)}; the upstream schedule data may be older.` });
     } catch (requestError) {
       const cached = journeyCache.current.get(cacheKey);
       if (cached) {
         setJourneyResult(cached);
         setJourneyMode('device-cache');
-        setJourneyNotice({ kind: 'stale', text: `The latest request failed. Showing the previous result from this page session, retrieved ${niceDateTime(cached.retrievedAt)}.` });
+        setJourneyNotice({ kind: 'stale', text: `Could not load the local timetable catalogue. Showing the previous result from this page session, retrieved ${niceDateTime(cached.retrievedAt)}.` });
       } else {
-        setJourneyNotice({ kind: 'error', text: requestError?.message || 'The train-between-stations search could not be completed.' });
+        setJourneyNotice({ kind: 'error', text: requestError?.message || 'The local timetable catalogue could not be loaded. Run the GitHub Actions timetable sync and wait for Cloudflare to redeploy.' });
       }
     } finally {
       setJourneyBusy(false);
@@ -538,16 +513,20 @@ function App() {
     }
     setScheduleLoadingNumber(number);
     try {
-      const response = await fetch(`/api/trains/${encodeURIComponent(number)}/schedule`, { headers: { Accept: 'application/json' }, cache: 'no-store' });
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok || body?.success !== true || !body?.data) {
-        throw new Error(body?.error?.message || 'The complete schedule could not be loaded.');
-      }
-      const shaped = { data: body.data, retrievedAt: body.retrievedAt || new Date().toISOString(), cacheMode: body.cacheMode || 'live' };
+      // Full timetable expansion loads a static, prefix-sharded JSON file.
+      // It does not call the RailRadar API.
+      const body = await getStaticTrainSchedule(number);
+      const shaped = {
+        data: body.data,
+        retrievedAt: body.retrievedAt || null,
+        syncCheckedAt: body.syncCheckedAt || null,
+        sourceDataCommitAt: body.sourceDataCommitAt || null,
+        cacheMode: 'static',
+      };
       scheduleCache.current.set(number, shaped);
       setSchedulesByTrain((previous) => ({ ...previous, [number]: shaped }));
     } catch (requestError) {
-      setScheduleErrors((previous) => ({ ...previous, [number]: requestError?.message || 'The complete schedule is unavailable.' }));
+      setScheduleErrors((previous) => ({ ...previous, [number]: requestError?.message || 'This train schedule is unavailable in the local timetable snapshot.' }));
     } finally {
       setScheduleLoadingNumber(null);
     }

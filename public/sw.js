@@ -15,6 +15,17 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin || url.pathname.startsWith('/api/')) return;
 
+  // Timetable files are updated by the daily GitHub Actions sync. Prefer the
+  // network so a client does not remain stuck on yesterday's cached snapshot.
+  // Keep an offline cache as a fallback only.
+  if (url.pathname.startsWith('/data/timetable/')) {
+    event.respondWith(fetch(request).then((response) => {
+      if (response.ok) caches.open(CACHE_NAME).then((cache) => cache.put(request, response.clone()));
+      return response;
+    }).catch(async () => (await caches.match(request)) || Response.error()));
+    return;
+  }
+
   if (request.mode === 'navigate') {
     event.respondWith(fetch(request).then((response) => {
       if (response.ok) {

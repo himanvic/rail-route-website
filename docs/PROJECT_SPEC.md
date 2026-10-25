@@ -14,18 +14,19 @@ A polished, responsive public website for Indian train running status, with a pr
 1. Live status query by five-digit train number and optional journey date.
 2. If a successful API response exists, show current/previous/next station fields, delay, speed when provided, route timeline, provider data and retrieval time.
 3. Journey Explorer: search trains between two station codes/names, filter by journey date, compare scheduled departure/arrival, duration, distance and halts where supplied.
-4. Station suggestions through a debounced, server-side lookup endpoint. Users can still enter a station code manually if the provider is not configured.
+4. Station suggestions are filtered from a locally hosted station catalogue. No RailRadar call is made for autocomplete; users can also enter a station code directly.
 5. Expand a train result to load its full halts-only schedule. Highlight the selected source-to-destination segment and show an animated illustrative route line. The decorative animation is never represented as live GPS.
 6. PNR action redirects directly to the official enquiry page. There is no local PNR form, storage, logging or PNR API call.
-7. Short-lived Cloudflare edge caches for live status, station suggestions, between-station timetable results and static train schedules. The live-status cache uses a 120-second TTL; lookup and schedule TTLs are defined in the shared API helper/routes and must follow provider terms.
-8. Browser-local fallback that saves only the last successful live train status. Journey-search fallback is in-memory for the current page session only; stale results are labelled with the original retrieval time.
-9. Animated Privacy & Data Transparency page linked from the footer.
-10. Honest no-provider, invalid-input, rate-limit and upstream-error states. No fabricated train results.
+7. Only live status calls the RailRadar adapter and is served through a short-lived Cloudflare edge cache (120 seconds, subject to provider terms). Station suggestions, trains-between-stations search and full timetables use static sharded JSON files and do not consume the RailRadar monthly API quota.
+8. Daily GitHub Actions sync checks a community dataset source, creates compact station/train/route indexes and commits a new snapshot. The displayed upstream data revision date is distinct from the daily sync-check time.
+9. Browser-local fallback that saves only the last successful live train status. Journey-search fallback is in-memory for the current page session only; old results are labelled.
+10. Animated Privacy & Data Transparency page linked from the footer.
+11. Honest no-provider, invalid-input, rate-limit and upstream-error states. No fabricated live train results.
 
 ## Architecture
 - Frontend: React + Vite, static assets hosted on Cloudflare Pages.
 - Backend: Cloudflare Pages Function under `functions/`.
-- Data: optional external RailRadar API through server-side adapters for live status, station suggestions, train-between-stations search and full schedule lookup. No mandatory database.
+- Data: optional external RailRadar API only for live status; static sharded timetable data for station suggestions, station-to-station search and full schedules. No mandatory database.
 - Secret: `RAILRADAR_API_KEY` configured as a Cloudflare secret; never exposed to Vite/client code.
 - Repository: GitHub; never commit `.dev.vars` or API secrets.
 
@@ -34,7 +35,7 @@ Before publicly enabling live API queries, verify the current provider account, 
 
 ## Not included / future work
 - PNR lookup or storage.
-- Offline full national station/train database; search suggestions and schedules require the configured provider, while manual station-code search remains available.
+- Guarantee that the upstream community timetable is updated daily; GitHub Actions checks daily, but the source maintainer controls when the actual dataset changes.
 - Geographic map tiles and live GPS map. The first release uses an animated timeline; its movement is decorative and not a representation of train position.
 - User accounts, personal search history, database, payment processing or analytics.
 - Guarantee of five years of uninterrupted hosting or live railway data.

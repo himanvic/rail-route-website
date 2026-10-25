@@ -1,0 +1,85 @@
+name: Daily timetable snapshot sync
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 03:00 India Standard Time (21:30 UTC on the previous day).
+    - cron: '30 21 * * *'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: daily-timetable-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out Rail & Route
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Fetch upstream timetable snapshot
+        id: upstream
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/prasenjit-27/Indian-Railway-Data.git "$RUNNER_TEMP/indian-railway-data"
+          SOURCE_DIR="$RUNNER_TEMP/indian-railway-data"
+          COMMIT="$(git -C "$SOURCE_DIR" rev-parse HEAD)"
+          # Ask the public GitHub API for the latest commit of each data file.
+          # If unauthenticated API access is temporarily unavailable, preserve
+          # an honest "unknown" rather than claiming that today's sync changed the data.
+          TRAIN_DATE="$(curl -fsSL -H 'Accept: application/vnd.github+json' 'https://api.github.com/repos/prasenjit-27/Indian-Railway-Data/commits?path=trains.json&per_page=1' | jq -r '.[0].commit.committer.date // .[0].commit.author.date // empty' 2>/dev/null || true)"
+          STATION_DATE="$(curl -fsSL -H 'Accept: application/vnd.github+json' 'https://api.github.com/repos/prasenjit-27/Indian-Railway-Data/commits?path=stations.json&per_page=1' | jq -r '.[0].commit.committer.date // .[0].commit.author.date // empty' 2>/dev/null || true)"
+          DATA_COMMIT_AT="$(python - "$TRAIN_DATE" "$STATION_DATE" <<'PY'
+          import sys
+          from datetime import datetime
+          values = []
+          for raw in sys.argv[1:]:
+              try:
+                  values.append(datetime.fromisoformat(raw.replace('Z', '+00:00')))
+              except ValueError:
+                  pass
+          print(max(values).isoformat().replace('+00:00', 'Z') if values else 'unknown')
+          PY
+          )"
+          echo "source_dir=$SOURCE_DIR" >> "$GITHUB_OUTPUT"
+          echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
+          echo "data_commit_at=$DATA_COMMIT_AT" >> "$GITHUB_OUTPUT"
+          echo "Upstream revision: $COMMIT"
+          echo "Latest data-file commit: $DATA_COMMIT_AT"
+          test -s "$SOURCE_DIR/trains.json"
+          test -s "$SOURCE_DIR/stations.json"
+
+      - name: Build compact static timetable catalogue
+        run: >-
+          python scripts/sync_timetable.py
+          --source "${{ steps.upstream.outputs.source_dir }}"
+          --output public/data/timetable
+          --upstream-commit "${{ steps.upstream.outputs.commit }}"
+          --upstream-data-commit-at "${{ steps.upstream.outputs.data_commit_at }}"
+
+      - name: Commit updated catalogue
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/data/timetable
+          if git diff --cached --quiet; then
+            echo "No timetable catalogue changes to commit."
+            exit 0
+          fi
+          git commit -m "data: sync scheduled timetable snapshot"
+          git push origin HEAD:main
