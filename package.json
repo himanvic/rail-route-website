@@ -1,0 +1,25 @@
+{
+  "name": "rail-route-website",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "A privacy-aware, premium Indian train status website starter built for GitHub and Cloudflare Pages.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "dev:cloudflare": "npm run build && wrangler pages dev dist"
+  },
+  "dependencies": {
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "lucide-react": "^0.468.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^5.0.0",
+    "vite": "^7.0.0",
+    "wrangler": "^4.30.0",
+    "browserslist": "^4.29.3",
+    "caniuse-lite": "^1.0.30001819"
+  }
+}

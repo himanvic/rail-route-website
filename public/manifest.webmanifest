@@ -1,0 +1,12 @@
+{
+  "name": "Rail & Route — Indian Train Status",
+  "short_name": "Rail & Route",
+  "description": "Indian train running status, thoughtfully presented.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f7f5ef",
+  "theme_color": "#171715",
+  "icons": [
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
