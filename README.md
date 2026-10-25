@@ -225,3 +225,33 @@ This patch combines the existing on-device GPS feature, privacy explanation, exa
 ## Security
 
 Never commit `.dev.vars` or an API key. Keep your existing secret configuration untouched.
+
+# Rail & Route — Live position, timeline estimate, and vertical train animation update
+
+This update is intended for the existing Rail & Route project. It changes only `src/main.jsx` and `src/style.css` and retains the current GPS button, full provider-returned route, exact-time color statuses, and GitHub footer credit.
+
+## What changes
+
+- After a live-status result arrives, the page smoothly scrolls to the station marked `REPORTED HERE`. If the provider's current station cannot be matched to a route stop, it scrolls to the result panel instead.
+- Replaces the small horizontal train glyph on the route summary with a **vertical train set** in the station timeline's left track: a locomotive and small coaches in the existing champagne-gold palette.
+- The vertical train is positioned at the provider-reported station or along the segment only when the API supplies a usable segment-progress value. It eases to a new position after a new response; it does not simulate continuous live GPS movement.
+- Full route stations remain listed from origin to destination.
+- For upcoming stations without actual times and without stop-specific delay, the UI may calculate an estimate by carrying forward the latest reported overall delay. These rows are marked `EST. LATE`, `EST. EARLY`, or `EST. ON TIME`, show the scheduled time alongside the estimate, and use red/green theme-matched colors. If delay is unavailable, the scheduled time remains neutral.
+- Adds a note explaining that estimated future times are guides and the delay can change.
+- Keeps the optional on-device GPS function. Device GPS describes the visitor's device, not the train.
+
+## Apply
+
+1. Make a backup or commit your current branch first.
+2. In VS Code, confirm you are on `feature/live-route-ui` (or the feature branch for your open PR).
+3. Extract this ZIP and copy the files inside into the project root, replacing only `src/main.jsx` and `src/style.css`.
+4. Do not replace `.dev.vars`, `.git`, `package.json`, `package-lock.json`, `.gitignore`, `functions/`, `.github/workflows/`, generated timetable data, `wrangler.toml`, or `vite.config.js`.
+5. Run `npm run build`.
+6. Check that the new result scrolls to the reported station, that the vertical train is beside the stop list, and that only upcoming stations without actual times display estimates.
+7. In Source Control, review the diff, commit on the feature branch, push it, and update the Pull Request. Merge only after review/checks pass.
+
+## Data accuracy and quota
+
+- This UI patch makes no API requests and does not change the RailRadar credential or quota logic.
+- Estimated future times are derived from the latest reported overall delay and the saved timetable. They are not actual arrival/departure reports and must be labelled estimated.
+- If the provider response lacks a matched route station, the UI does not invent a train position and cannot automatically scroll to a specific stop.
