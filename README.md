@@ -283,3 +283,19 @@ Incremental update package for the existing Rail & Route website.
 - Weather forecast selected nearest to each stop's estimated arrival time; no weather for the current station or non-stopping points.
 - One batched Open-Meteo request for at most two station coordinates; 20-minute edge/session caching; no polling.
 - Privacy page and performance documentation updated.
+
+
+# Rail & Route — Live Route Timeline UI/UX Redesign
+
+A focused UI/UX upgrade resolving timeline bottlenecks on long-haul routes (e.g. Train 22366 Danapur SF Express) and establishing clear data transparency.
+
+### Features & Fixes:
+- **Future Stop Labeling Fix (P0):** Future unreached stops now strictly display `EST. · SCHED [Time]` and dashed badges (e.g. `EST. LATE (+9h 38m)`), completely eliminating misleading `ACTUAL` badges on upcoming stops.
+- **Dashed Upcoming Railway Track:** The vertical train progress track is solid gold up to the current position and dashed grey for upcoming route segments.
+- **Sticky "Jump to Train" Pill Bar (P1):** Smooth one-click scroll to the currently reported station node (`● Live at Station (Stop X/Y) · Next: Halt — Jump to Train ↓`).
+- **Explicit Delay Deltas (P1):** Displays exact calculated delay offsets inline (`LATE (+8h 34m)`, `EST. LATE (+9h 38m)`).
+- **Pass-Through Station Streamlining (P2):** Deduplicated labels, compact rows, and graceful handling of missed provider pings (`PASS TIME NOT REPORTED`).
+- **Desktop 2-Column Split Layout (P2):** Solves desktop whitespace with a pinned sticky sidebar on the left and a scrollable timeline on the right.
+- **OLED Dark Mode (Low-Carbon):** High-efficiency `#121316` background and `#E6E1DA` typography reducing battery draw on mobile OLED screens.
+
+See [`docs/LIVE-ROUTE-UX-REDESIGN.md`](./docs/LIVE-ROUTE-UX-REDESIGN.md) for full technical details.
