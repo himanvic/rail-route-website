@@ -856,3 +856,62 @@ h1, h2, h3, h4, p { margin-top: 0; }
   .route-segment-toggle,
   .route-segment-action svg { transition: none !important; }
 }
+
+/* Compact live tracker: show the nearby journey first, keep the full route on demand. */
+.route-stops-heading {
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.route-stops-title {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.route-stops-title > span {
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 780;
+}
+.route-stops-title > small {
+  color: var(--text-muted);
+  font-size: 8px;
+  line-height: 1.45;
+  font-weight: 450;
+}
+.route-full-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid color-mix(in srgb, var(--gold-dark) 48%, var(--line));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--gold) 8%, var(--surface));
+  color: var(--gold-dark);
+  font: inherit;
+  font-size: 9px;
+  font-weight: 780;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.route-full-toggle:hover { background: color-mix(in srgb, var(--gold) 15%, var(--surface)); }
+.route-full-toggle svg { transition: transform .18s ease; }
+.route-full-toggle-open { transform: rotate(180deg); }
+.theme-dark .route-full-toggle { color: #dfc28d; border-color: #75603c; background: #29261f; }
+.route-stops-compact .route-motion-note { margin-bottom: 8px; }
+.route-stops-compact .stops-list { padding-top: 2px; }
+.route-stops-expanded .stops-list { padding-top: 2px; }
+.route-stops-compact .stop-row { min-height: 51px; }
+.route-stops-compact .station-weather { margin-left: 2px; }
+.station-weather span { text-transform: lowercase; }
+@media (max-width: 600px) {
+  .route-stops-heading { align-items: flex-start; }
+  .route-full-toggle { min-height: 32px; padding: 0 10px; font-size: 8px; }
+  .route-stops-title > span { font-size: 10px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .route-full-toggle svg { transition: none !important; }
+}

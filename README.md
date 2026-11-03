@@ -270,3 +270,16 @@ Includes:
 - Privacy text updated for PWA caching and route halt/pass-through display.
 
 See [`APPLY-UPDATE.md`](./APPLY-UPDATE.md) for safe overlay instructions. Do not replace `.git`, secrets, package files, timetable data or the GitHub Actions workflow.
+
+# Rail & Route — compact tracker + next-two-halt forecasts
+
+Incremental update package for the existing Rail & Route website.
+
+### Included
+
+- Compact Live Status preview: previous halt, current provider-reported position, next two official halts.
+- Full route remains available on demand with official halts visible and click-to-expand pass-through stations.
+- Nearby weather forecast only for the next two explicitly marked official halts after the reported position.
+- Weather forecast selected nearest to each stop's estimated arrival time; no weather for the current station or non-stopping points.
+- One batched Open-Meteo request for at most two station coordinates; 20-minute edge/session caching; no polling.
+- Privacy page and performance documentation updated.

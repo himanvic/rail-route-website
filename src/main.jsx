@@ -7,7 +7,8 @@ import {
 } from 'lucide-react';
 import './style.css';
 import { getStaticStations, getStaticTrainSchedule, searchStaticStations, searchStaticTrainsBetween } from './lib/static-timetable.js';
-import { buildLiveRouteRows } from './lib/live-route-view.js';
+import { buildLiveRouteRows, isPassThroughStop } from './lib/live-route-view.js';
+import { estimateStopArrivalDate, getCompactLiveStopIndexes, getNextOfficialHaltIndexes, selectForecastForArrival } from './lib/live-status-presentation.js';
 
 const OFFICIAL_PNR_URL = 'https://www.indianrail.gov.in/enquiry/PNR/PnrEnquiry.html';
 const LAST_STATUS_KEY = 'rail-route:last-train-status:v1';
@@ -192,7 +193,7 @@ function readSessionWeather(key) {
 
 function writeSessionWeather(key, value) {
   try {
-    // One small result for at most three public station coordinates; expires after 20 minutes.
+    // One small forecast result for at most two upcoming official-halt coordinates; expires after 20 minutes.
     sessionStorage.setItem(`${WEATHER_SESSION_PREFIX}${key}`, JSON.stringify(value));
   } catch {
     // Storage may be disabled or full. Weather continues without a browser cache.
@@ -225,6 +226,7 @@ function StatusResult({ result, mode, onRefresh, refreshing }) {
   const [weatherFetchedAt, setWeatherFetchedAt] = useState(null);
   const [weatherTargetCodes, setWeatherTargetCodes] = useState([]);
   const [expandedRouteSegments, setExpandedRouteSegments] = useState({});
+  const [fullRouteOpen, setFullRouteOpen] = useState(false);
   const resultPanelRef = useRef(null);
   const stopsListRef = useRef(null);
   const activeStopRef = useRef(null);
@@ -255,6 +257,15 @@ function StatusResult({ result, mode, onRefresh, refreshing }) {
   const routeRows = routeView.rows;
   const passThroughCount = routeView.passThroughCount;
   const routeHasHaltMetadata = routeView.hasExplicitHaltMetadata;
+  const compactStopIndexes = useMemo(
+    () => getCompactLiveStopIndexes(route, routeHaltIndexes, routeCurrentIndex, 2),
+    [route, routeHaltIndexes, routeCurrentIndex],
+  );
+  const compactRouteRows = useMemo(
+    () => compactStopIndexes.map((index) => ({ type: 'stop', index, passThrough: isPassThroughStop(route[index]) })),
+    [compactStopIndexes, route],
+  );
+  const displayedRouteRows = fullRouteOpen ? routeRows : compactRouteRows;
   const isStale = mode === 'device-cache' || mode === 'edge-cache';
   const statusText = String(data?.status || 'status unavailable').replaceAll('-', ' ');
   const currentDelayMinutes = [data?.delayMinutes, current?.delayMinutes, current?.delay?.minutes]
@@ -273,34 +284,39 @@ function StatusResult({ result, mode, onRefresh, refreshing }) {
     setNearestRouteStop(null);
     setGpsMessage('');
     setExpandedRouteSegments({});
+    setFullRouteOpen(false);
   }, [resultTrainKey, result?.retrievedAt]);
 
-  // Weather is requested once per result for the reported station and up to two upcoming stops.
-  // It uses public station coordinates from the local timetable; passenger GPS is never sent.
-  // A short session cache and Cloudflare edge cache reduce repeat requests. There is no polling.
+  // Forecasts are requested only for the next two official halts strictly after
+  // the reported position. The current station and pass-through points are excluded.
+  // One batched Open-Meteo request is cached; there is no polling and no RailRadar call.
   React.useEffect(() => {
     let cancelled = false;
     const controller = new AbortController();
     setWeatherByCode({});
     setWeatherFetchedAt(null);
     setWeatherTargetCodes([]);
-    if (!data || !hasReportedRoutePosition || routeCurrentIndex < 0) {
+    if (!data || !hasReportedRoutePosition || routeCurrentIndex < 0 || !routeHasHaltMetadata) {
       setWeatherState('idle');
       return () => controller.abort();
     }
 
-    async function loadNearbyWeather() {
+    async function loadNextHaltForecasts() {
       setWeatherState('loading');
       try {
         const stationRows = await getStaticStations();
         if (cancelled) return;
         const stationByCode = new Map(stationRows.map((station) => [String(station.code || '').toUpperCase(), station]));
-        const upcomingHaltIndexes = routeHaltIndexes.filter((index) => index >= routeCurrentIndex).slice(0, 3);
-        const targets = upcomingHaltIndexes.map((index) => route[index]).map((stop) => {
+        const upcomingHaltIndexes = getNextOfficialHaltIndexes(route, routeHaltIndexes, routeCurrentIndex, 2, routeHasHaltMetadata);
+        const targets = upcomingHaltIndexes.map((index) => {
+          const stop = route[index];
           const code = routeStopCode(stop);
           const localStation = stationByCode.get(code);
           const coords = stationCoordinates(stop) || stationCoordinates(stop?.station) || stationCoordinates(localStation);
-          return code && coords ? { code, name: routeStopName(stop), ...coords } : null;
+          const arrival = estimateStopArrivalDate(stop, currentDelayMinutes);
+          return code && coords && arrival
+            ? { index, code, name: routeStopName(stop), arrival, ...coords }
+            : null;
         }).filter(Boolean);
 
         if (!targets.length) {
@@ -312,7 +328,7 @@ function StatusResult({ result, mode, onRefresh, refreshing }) {
           latitude: Number(station.latitude.toFixed(2)),
           longitude: Number(station.longitude.toFixed(2)),
         }));
-        const cacheKey = rounded.map((point) => `${point.latitude},${point.longitude}`).join('|');
+        const cacheKey = rounded.map((point, index) => `${point.latitude},${point.longitude}@${targets[index].arrival.toISOString().slice(0, 13)}`).join('|');
         const cached = readSessionWeather(cacheKey);
         let items = cached?.items || null;
         let fetchedAt = cached?.fetchedAt || null;
@@ -329,14 +345,13 @@ function StatusResult({ result, mode, onRefresh, refreshing }) {
           });
           const body = await response.json().catch(() => ({}));
           if (!response.ok || !body.success || !Array.isArray(body.locations)) {
-            throw new Error(body?.error?.message || 'Nearby weather is temporarily unavailable.');
+            throw new Error(body?.error?.message || 'Nearby weather forecast is temporarily unavailable.');
           }
           items = {};
           body.locations.slice(0, targets.length).forEach((location, index) => {
-            const currentWeather = location?.current || {};
-            const temperature = currentWeather.temperatureC;
-            if (typeof temperature === 'number' && Number.isFinite(temperature)) {
-              items[targets[index].code] = currentWeather;
+            const forecast = selectForecastForArrival(location?.hourly, targets[index].arrival);
+            if (forecast && typeof forecast.temperatureC === 'number' && Number.isFinite(forecast.temperatureC)) {
+              items[targets[index].code] = forecast;
             }
           });
           fetchedAt = body.retrievedAt || new Date().toISOString();
@@ -353,12 +368,12 @@ function StatusResult({ result, mode, onRefresh, refreshing }) {
       }
     }
 
-    loadNearbyWeather();
+    loadNextHaltForecasts();
     return () => {
       cancelled = true;
       controller.abort();
     };
-  }, [data, result?.retrievedAt, resultTrainKey, hasReportedRoutePosition, routeCurrentIndex, route.length, routeHaltIndexes]);
+  }, [data, result?.retrievedAt, resultTrainKey, hasReportedRoutePosition, routeCurrentIndex, route.length, routeHaltIndexes, routeHasHaltMetadata, currentDelayMinutes]);
 
   // After a successful live lookup or refresh, move the page to the station the provider last reported.
   // If the provider cannot match a station to the route, bring the result panel into view instead.
@@ -544,11 +559,20 @@ function StatusResult({ result, mode, onRefresh, refreshing }) {
         <p className="device-gps-privacy"><ShieldCheck size={13} aria-hidden="true"/> Location is requested only when you click, kept in this page's memory, and not sent to RailRadar or saved to a database.</p>
       </section>
       {safeRoute.length > 0 && (
-        <div className="route-stops">
-          <div className="route-stops-heading"><span>Train route · official halts</span><span>{routeHaltIndexes.length} halts{passThroughCount ? ` · ${passThroughCount} pass-through hidden` : ''}</span></div>
-          {hasReportedRoutePosition && <div className="route-motion-note"><TrainFront size={14} aria-hidden="true"/><span>The vertical train marks the provider's latest reported position. Pass-through stations are hidden until you expand the segment between two halts.</span></div>}
+        <div className={`route-stops ${fullRouteOpen ? 'route-stops-expanded' : 'route-stops-compact'}`}>
+          <div className="route-stops-heading">
+            <div className="route-stops-title">
+              <span>{fullRouteOpen ? 'Complete train route' : 'Around your train'}</span>
+              <small>{fullRouteOpen ? `${routeHaltIndexes.length} official halts${passThroughCount ? ` · ${passThroughCount} pass-through available` : ''}` : hasReportedRoutePosition ? 'Previous halt · reported position · next two halts' : 'Current position unavailable · showing the route start'}</small>
+            </div>
+            <button className="route-full-toggle" type="button" aria-expanded={fullRouteOpen} onClick={() => setFullRouteOpen((open) => !open)}>
+              {fullRouteOpen ? 'Show nearby stops' : `View full route · ${routeHaltIndexes.length} halts`}
+              <ChevronDown size={14} className={fullRouteOpen ? 'route-full-toggle-open' : ''}/>
+            </button>
+          </div>
+          {hasReportedRoutePosition && <div className="route-motion-note"><TrainFront size={14} aria-hidden="true"/><span>{fullRouteOpen ? 'The vertical train marks the provider’s latest reported position. Click a segment between official halts to reveal pass-through stations.' : 'A short view around the last provider-reported station. Open the full route to inspect every halt and expand pass-through segments.'}</span></div>}
           {hasEstimatedUpcomingStops && <div className="route-estimate-note"><Clock3 size={13} aria-hidden="true"/><span>Upcoming times marked EST. carry forward the latest reported delay as a guide; actual delays may change.</span></div>}
-          {passThroughCount === 0 && !routeHasHaltMetadata && <div className="route-estimate-note"><Clock3 size={13} aria-hidden="true"/><span>This provider response does not identify pass-through stations, so all supplied route points remain visible.</span></div>}
+          {passThroughCount === 0 && !routeHasHaltMetadata && fullRouteOpen && <div className="route-estimate-note"><Clock3 size={13} aria-hidden="true"/><span>This provider response does not identify pass-through stations, so all supplied route points remain visible.</span></div>}
           <div className="stops-list vertical-train-timeline" ref={stopsListRef}>
             {hasReportedRoutePosition && <div className="vertical-train-layer" aria-hidden="true">
               <span className="vertical-track-sleepers" />
@@ -559,7 +583,7 @@ function StatusResult({ result, mode, onRefresh, refreshing }) {
                 <span className="route-engine"><TrainFront size={13} strokeWidth={2.2} aria-hidden="true"/></span>
               </div>}
             </div>}
-            {routeRows.map((row) => {
+            {displayedRouteRows.map((row) => {
               if (row.type === 'segment') {
                 const fromStop = route[row.startIndex];
                 const toStop = route[row.endIndex];
@@ -591,10 +615,10 @@ function StatusResult({ result, mode, onRefresh, refreshing }) {
                   <div className="stop-name-meta">
                     <small>{routeStopCode(stop) || 'Station code unavailable'}</small>
                     {passThrough && <span className="pass-through-label">NO SCHEDULED HALT</span>}
-                    {weatherByCode[routeStopCode(stop)] && <span className="station-weather" title="Nearby model-based weather; not a platform sensor reading">
+                    {weatherByCode[routeStopCode(stop)] && <span className="station-weather" title={`Modelled weather forecast near ${stationName}, around ${niceClock(weatherByCode[routeStopCode(stop)].forecastTime)} IST; not a platform sensor reading`}>
                       <WeatherGlyph code={weatherByCode[routeStopCode(stop)].weatherCode} isDay={weatherByCode[routeStopCode(stop)].isDay}/>
                       <b>{Math.round(weatherByCode[routeStopCode(stop)].temperatureC)}°C</b>
-                      <span>{weatherDescription(weatherByCode[routeStopCode(stop)].weatherCode)}</span>
+                      <span>at arrival</span>
                     </span>}
                     {!weatherByCode[routeStopCode(stop)] && weatherState === 'loading' && weatherTargetCodes.includes(routeStopCode(stop)) && <span className="station-weather-loading">Weather…</span>}
                   </div>
@@ -611,9 +635,9 @@ function StatusResult({ result, mode, onRefresh, refreshing }) {
         </div>
       )}
       {safeRoute.length > 0 && hasReportedRoutePosition && <div className={`weather-attribution weather-${weatherState}`} aria-live="polite">
-        {weatherState === 'loading' && <span><CloudSun size={13}/> Loading nearby weather for the reported stop and next two stops…</span>}
-        {weatherState === 'ready' && <><span><Thermometer size={13}/> Nearby modelled weather · updated {niceDateTime(weatherFetchedAt)}</span><a href="https://open-meteo.com/" target="_blank" rel="noreferrer noopener">Weather by Open-Meteo</a></>}
-        {weatherState === 'unavailable' && <span>Nearby weather is unavailable for these stations. Train status is unaffected.</span>}
+        {weatherState === 'loading' && <span><CloudSun size={13}/> Loading arrival-time forecasts for the next two official halts…</span>}
+        {weatherState === 'ready' && <><span><Thermometer size={13}/> Next-two-halt arrival forecasts · updated {niceDateTime(weatherFetchedAt)}</span><a href="https://open-meteo.com/" target="_blank" rel="noreferrer noopener">Weather by Open-Meteo</a></>}
+        {weatherState === 'unavailable' && <span>Forecasts for the next two official halts are unavailable. Train status is unaffected.</span>}
       </div>}
       {Array.isArray(data.exceptions) && data.exceptions.length > 0 && <div className="exception-note"><ShieldCheck size={17}/><div><strong>Service notice</strong>{data.exceptions.map((item, i) => <p key={i}>{item.message || item.type || 'An operational update was reported.'}</p>)}</div></div>}
       <div className="result-footnote"><div className="result-timestamps"><IconText icon={Clock3}>Retrieved {niceDateTime(result.retrievedAt)}</IconText>{result.providerTimestamp && <span>Provider updated {niceDateTime(result.providerTimestamp)}</span>}</div><span>{isStale ? 'This result may be out of date. Refresh to try the live source again.' : 'Live information depends on the external data provider.'}</span></div>

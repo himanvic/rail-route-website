@@ -1,6 +1,7 @@
 const OPEN_METEO_URL = 'https://api.open-meteo.com/v1/forecast';
 const WEATHER_CACHE_TTL_SECONDS = 20 * 60;
-const MAX_LOCATIONS = 3;
+const MAX_LOCATIONS = 2;
+const MAX_HOURLY_ROWS = 72;
 
 function jsonResponse(payload, status = 200, extraHeaders = {}) {
   return new Response(JSON.stringify(payload), {
@@ -26,32 +27,38 @@ function parseCoordinateList(value) {
   return numbers;
 }
 
-function normalizeCurrent(record) {
-  const current = record?.current || {};
-  const numeric = (value) => typeof value === 'number' && Number.isFinite(value) ? value : null;
-  return {
-    temperatureC: numeric(current.temperature_2m),
-    apparentTemperatureC: numeric(current.apparent_temperature),
-    relativeHumidityPercent: numeric(current.relative_humidity_2m),
-    windSpeedKmh: numeric(current.wind_speed_10m),
-    weatherCode: numeric(current.weather_code),
-    isDay: numeric(current.is_day),
-    time: typeof current.time === 'string' ? current.time : null,
-  };
+function finiteOrNull(value) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function normalizeHourly(record) {
+  const hourly = record?.hourly || {};
+  const times = Array.isArray(hourly.time) ? hourly.time.slice(0, MAX_HOURLY_ROWS) : [];
+  const field = (name, index) => Array.isArray(hourly[name]) ? finiteOrNull(hourly[name][index]) : null;
+  return times.map((time, index) => ({
+    time: typeof time === 'string' ? time : null,
+    temperatureC: field('temperature_2m', index),
+    apparentTemperatureC: field('apparent_temperature', index),
+    relativeHumidityPercent: field('relative_humidity_2m', index),
+    precipitationProbabilityPercent: field('precipitation_probability', index),
+    windSpeedKmh: field('wind_speed_10m', index),
+    weatherCode: field('weather_code', index),
+    isDay: field('is_day', index),
+  })).filter((row) => row.time);
 }
 
 export async function onRequestGet(context) {
-  const { request } = context;
+  const { request, waitUntil } = context;
   const url = new URL(request.url);
   const latitudes = parseCoordinateList(url.searchParams.get('latitude'));
   const longitudes = parseCoordinateList(url.searchParams.get('longitude'));
 
   if (!latitudes || !longitudes || latitudes.length !== longitudes.length) {
-    return jsonResponse({ success: false, error: { code: 'INVALID_COORDINATES', message: 'Provide matching latitude and longitude lists for up to three stations.' } }, 400);
+    return jsonResponse({ success: false, error: { code: 'INVALID_COORDINATES', message: 'Provide matching latitude and longitude lists for up to two upcoming stations.' } }, 400);
   }
 
-  // This project serves Indian railway stations. Restrict this endpoint to Indian coordinates
-  // so it cannot be used as a general-purpose public weather proxy.
+  // This endpoint is only for coordinates from Indian railway stations.
+  // Restricting the supported area prevents use as a general public weather proxy.
   const points = latitudes.map((latitude, index) => ({
     latitude: Number(latitude.toFixed(2)),
     longitude: Number(longitudes[index].toFixed(2)),
@@ -69,23 +76,23 @@ export async function onRequestGet(context) {
   cacheKeyUrl.search = '';
   cacheKeyUrl.searchParams.set('latitude', latParam);
   cacheKeyUrl.searchParams.set('longitude', lonParam);
+  cacheKeyUrl.searchParams.set('kind', 'hourly-arrival-forecast-v1');
   const cacheKey = new Request(cacheKeyUrl.toString(), { method: 'GET' });
 
-  // Cloudflare's per-location edge cache reduces repeat weather requests.
-  // If Cache API is unavailable in local tooling, the request still works without caching.
   try {
     if (typeof caches !== 'undefined' && caches.default) {
       const cached = await caches.default.match(cacheKey);
       if (cached) return cached;
     }
   } catch {
-    // A cache miss must never prevent weather from loading.
+    // A cache miss must never prevent a weather lookup.
   }
 
   const upstreamUrl = new URL(OPEN_METEO_URL);
   upstreamUrl.searchParams.set('latitude', latParam);
   upstreamUrl.searchParams.set('longitude', lonParam);
-  upstreamUrl.searchParams.set('current', 'temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,is_day,wind_speed_10m');
+  upstreamUrl.searchParams.set('hourly', 'temperature_2m,apparent_temperature,relative_humidity_2m,precipitation_probability,weather_code,wind_speed_10m,is_day');
+  upstreamUrl.searchParams.set('forecast_days', '3');
   upstreamUrl.searchParams.set('timezone', 'Asia/Kolkata');
 
   const controller = new AbortController();
@@ -97,7 +104,7 @@ export async function onRequestGet(context) {
       signal: controller.signal,
     });
     if (!upstream.ok) {
-      return jsonResponse({ success: false, error: { code: 'WEATHER_PROVIDER_UNAVAILABLE', message: 'Nearby weather is temporarily unavailable.' } }, 502);
+      return jsonResponse({ success: false, error: { code: 'WEATHER_PROVIDER_UNAVAILABLE', message: 'Nearby station forecasts are temporarily unavailable.' } }, 502);
     }
 
     const upstreamBody = await upstream.json();
@@ -105,10 +112,10 @@ export async function onRequestGet(context) {
     const locations = points.map((point, index) => ({
       latitude: point.latitude,
       longitude: point.longitude,
-      current: normalizeCurrent(records[index]),
+      hourly: normalizeHourly(records[index]),
     }));
-    if (!locations.some((location) => typeof location.current.temperatureC === 'number')) {
-      return jsonResponse({ success: false, error: { code: 'WEATHER_DATA_MISSING', message: 'Weather data is not available for these stations right now.' } }, 502);
+    if (!locations.some((location) => location.hourly.some((row) => typeof row.temperatureC === 'number'))) {
+      return jsonResponse({ success: false, error: { code: 'WEATHER_DATA_MISSING', message: 'Hourly forecast data is not available for the next two stations right now.' } }, 502);
     }
 
     const response = jsonResponse({
@@ -122,16 +129,16 @@ export async function onRequestGet(context) {
     try {
       if (typeof caches !== 'undefined' && caches.default) {
         const writePromise = caches.default.put(cacheKey, response.clone());
-        if (typeof context.waitUntil === 'function') context.waitUntil(writePromise);
+        if (waitUntil) waitUntil(writePromise);
         else await writePromise;
       }
     } catch {
-      // Cache write failure is non-fatal; the browser also keeps a short session cache.
+      // Cache write failures are non-fatal.
     }
     return response;
   } catch (error) {
     const timedOut = error?.name === 'AbortError';
-    return jsonResponse({ success: false, error: { code: timedOut ? 'WEATHER_TIMEOUT' : 'WEATHER_PROVIDER_UNAVAILABLE', message: timedOut ? 'Nearby weather took too long to respond.' : 'Nearby weather is temporarily unavailable.' } }, 502);
+    return jsonResponse({ success: false, error: { code: timedOut ? 'WEATHER_TIMEOUT' : 'WEATHER_PROVIDER_UNAVAILABLE', message: timedOut ? 'Station forecasts took too long to respond.' : 'Nearby station forecasts are temporarily unavailable.' } }, 502);
   } finally {
     clearTimeout(timeoutId);
   }
