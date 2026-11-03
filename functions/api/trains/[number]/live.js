@@ -74,6 +74,9 @@ export async function onRequest(context) {
 
   const upstreamUrl = new URL(`${RAILRADAR_BASE}/trains/${trainNumber}/live`);
   if (journeyDate) upstreamUrl.searchParams.set('date', journeyDate);
+  // Ask for the complete route once. The UI shows official halts by default and
+  // reveals isHalt:false pass-through stations when a visitor expands a segment.
+  upstreamUrl.searchParams.set('haltsOnly', 'false');
 
   let upstream;
   try {

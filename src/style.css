@@ -700,3 +700,159 @@ h1, h2, h3, h4, p { margin-top: 0; }
   .vertical-track-progress { transition: none !important; }
   .route-engine { animation: none !important; }
 }
+
+
+/* Nearby station weather: compact, optional and visually quiet. */
+.stop-name-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px 9px;
+  min-width: 0;
+}
+.station-weather {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--gold-dark);
+  font-size: 8px;
+  line-height: 1.25;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.station-weather svg { flex: 0 0 auto; }
+.station-weather b { font-size: 9px; font-weight: 800; }
+.station-weather span { color: var(--text-muted); font-size: 8px; }
+.station-weather-loading { color: var(--text-muted); font-size: 8px; }
+.weather-attribution {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px 12px;
+  margin: 8px 0 2px 30px;
+  color: var(--text-muted);
+  font-size: 8px;
+  line-height: 1.5;
+}
+.weather-attribution > span,
+.weather-attribution > a { display: inline-flex; align-items: center; gap: 5px; }
+.weather-attribution > a { color: var(--gold-dark); text-decoration: underline; text-underline-offset: 2px; }
+.theme-dark .station-weather { color: #d7b77d; }
+.theme-dark .weather-attribution > a { color: #d7b77d; }
+
+/* Low-power defaults: motion happens on interaction or new data, never as fake live movement. */
+.route-engine { animation: none; }
+.button-loader, .spin { animation-duration: 1s; }
+@media (max-width: 600px) {
+  .weather-attribution { margin-left: 0; font-size: 7px; }
+  .station-weather { gap: 3px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .station-weather, .weather-attribution { transition: none !important; animation: none !important; }
+}
+
+/* Official-halt-first live route. Pass-through stations expand only on demand. */
+.route-segment-control {
+  position: relative;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 10px;
+  align-items: stretch;
+  min-height: 43px;
+  z-index: 2;
+}
+.route-segment-connector {
+  justify-self: center;
+  width: 1px;
+  min-height: 100%;
+  border-left: 1px dashed color-mix(in srgb, var(--gold-dark) 55%, var(--line));
+}
+.route-segment-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  margin: 4px 0;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--gold) 36%, var(--line));
+  border-radius: 8px;
+  color: var(--text-soft);
+  background: color-mix(in srgb, var(--gold) 5%, var(--surface));
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  transition: background .16s ease, border-color .16s ease;
+}
+.route-segment-toggle:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--gold) 11%, var(--surface));
+  border-color: var(--gold-dark);
+}
+.route-segment-toggle:focus-visible,
+.install-app-button:focus-visible,
+.install-guidance-close:focus-visible {
+  outline: 2px solid var(--gold-dark);
+  outline-offset: 3px;
+}
+.route-segment-toggle:disabled { cursor: default; opacity: .86; }
+.route-segment-copy { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.route-segment-copy strong { color: var(--gold-dark); font-size: 9px; letter-spacing: .045em; }
+.route-segment-copy small { color: var(--text-muted); font-size: 8px; overflow-wrap: anywhere; }
+.route-segment-action { display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; color: var(--gold-dark); font-size: 8px; font-weight: 750; text-transform: uppercase; letter-spacing: .06em; }
+.route-segment-action svg { transition: transform .16s ease; }
+.route-segment-action .segment-chevron-open { transform: rotate(180deg); }
+.pass-through-stop { opacity: .88; }
+.pass-through-stop .stop-name strong { color: var(--text-soft); font-size: 10px; font-weight: 600; }
+.pass-through-stop .stop-marker { width: 5px; height: 5px; border-width: 1px; background: var(--surface); border-color: var(--gold-dark); }
+.pass-through-label { display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: 99px; padding: 2px 5px; color: var(--text-muted); font-size: 7px; letter-spacing: .04em; }
+.theme-dark .route-segment-toggle { background: #29261f; border-color: #5d4b2d; }
+.theme-dark .route-segment-copy strong,
+.theme-dark .route-segment-action { color: #d7b77d; }
+
+/* Installable PWA controls for Android Chrome and desktop Chromium browsers. */
+.install-app-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 11px;
+  border: 1px solid color-mix(in srgb, var(--gold-dark) 58%, var(--line));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--gold) 8%, transparent);
+  color: var(--gold-dark);
+  font-size: 10px;
+  font-weight: 750;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.install-app-button:hover { background: color-mix(in srgb, var(--gold) 16%, var(--surface)); }
+.theme-dark .install-app-button { color: #dfc28d; border-color: #75603c; }
+.install-guidance {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  margin-top: 10px;
+  margin-bottom: 10px;
+  padding: 13px 16px;
+  border: 1px solid color-mix(in srgb, var(--gold) 46%, var(--line));
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text-soft);
+  box-shadow: 0 8px 24px #00000008;
+}
+.install-guidance strong { display: block; margin-bottom: 4px; color: var(--text); font-size: 11px; }
+.install-guidance p { max-width: 780px; margin: 0; font-size: 10px; line-height: 1.65; }
+.install-guidance-close { display: grid; place-items: center; width: 30px; height: 30px; flex: 0 0 auto; border: 1px solid var(--line); border-radius: 50%; background: transparent; color: var(--text); cursor: pointer; }
+@media (max-width: 760px) {
+  .main-nav .install-app-button { width: 100%; margin: 8px 0 12px; min-height: 40px; }
+  .route-segment-control { grid-template-columns: 30px minmax(0, 1fr); gap: 8px; }
+  .route-segment-toggle { padding: 8px 9px; }
+  .install-guidance { width: calc(100% - 32px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .route-segment-toggle,
+  .route-segment-action svg { transition: none !important; }
+}
