@@ -33,7 +33,7 @@ button:focus-visible, input:focus-visible, a:focus-visible { outline: 2px solid 
 ::selection { background: #dac39c; color: #1a1916; }
 
 .site-shell { --surface: var(--paper); --surface-2: var(--paper-2); --text: var(--ink); --text-soft: var(--ink-soft); --text-muted: var(--muted); --line: var(--rule); background: var(--surface); color: var(--text); min-height: 100vh; transition: background .25s ease, color .25s ease; }
-.site-shell.theme-dark { --surface: #1a1a18; --surface-2: #22221f; --text: #f2efe7; --text-soft: #c7c2b8; --text-muted: #9f9a8f; --line: #383731; }
+.site-shell.theme-dark { --surface: #121316; --surface-2: #191b20; --text: #E6E1DA; --text-soft: #b8b3ab; --text-muted: #88847c; --line: #2b2d33; background: #121316; color: #E6E1DA; }
 .wrap { width: min(1240px, calc(100% - 64px)); margin-inline: auto; }
 .announcement-bar { height: 30px; background: #24231f; color: #d9d5cb; display: flex; gap: 8px; justify-content: center; align-items: center; font-size: 10px; letter-spacing: .06em; text-align: center; padding-inline: 16px; }
 .announcement-dot, .live-dot { height: 6px; width: 6px; border-radius: 50%; background: #94b49b; box-shadow: 0 0 0 3px #94b49b1f; flex: 0 0 auto; }
@@ -914,4 +914,233 @@ h1, h2, h3, h4, p { margin-top: 0; }
 }
 @media (prefers-reduced-motion: reduce) {
   .route-full-toggle svg { transition: none !important; }
+}
+
+/* ==========================================================================
+   UI/UX Redesign: Live Route Timeline & Desktop Two-Column Layout
+   ========================================================================== */
+
+/* 1. Desktop Two-Column Split Layout (Section 4.4) */
+.result-grid-desktop {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+@media (min-width: 992px) {
+  .result-grid-desktop {
+    display: grid;
+    grid-template-columns: minmax(360px, 38%) minmax(0, 1fr);
+    gap: 32px;
+    align-items: start;
+  }
+  .result-column-sidebar {
+    position: sticky;
+    top: 24px;
+    align-self: flex-start;
+    max-height: calc(100vh - 48px);
+    overflow-y: auto;
+    padding-right: 6px;
+  }
+  .result-column-sidebar::-webkit-scrollbar {
+    width: 4px;
+  }
+  .result-column-sidebar::-webkit-scrollbar-thumb {
+    background: var(--line);
+    border-radius: 4px;
+  }
+  .result-column-main {
+    min-width: 0;
+  }
+}
+
+/* 2. Sticky "Jump to Train" Pill Bar (Section 4.2) */
+.jump-to-train-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 10px 0 16px;
+  padding: 8px 14px;
+  background: color-mix(in srgb, var(--gold) 10%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--gold-dark) 42%, var(--line));
+  border-radius: 999px;
+  position: sticky;
+  top: 14px;
+  z-index: 12;
+  box-shadow: 0 4px 14px #0000000d;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+.theme-dark .jump-to-train-bar {
+  background: #191b20;
+  border-color: #6a5635;
+  box-shadow: 0 4px 16px #00000030;
+}
+.jump-to-train-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 9.5px;
+  color: var(--text);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.jump-to-train-status strong {
+  font-weight: 750;
+}
+.jump-to-train-status small {
+  color: var(--text-muted);
+}
+.jump-next-halt {
+  color: var(--text-soft);
+}
+.jump-next-halt em {
+  font-style: normal;
+  color: var(--gold-dark);
+  font-weight: 600;
+}
+.live-pulse-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #5a8a61;
+  flex: 0 0 auto;
+  box-shadow: 0 0 0 0 rgba(90, 138, 97, 0.7);
+  animation: live-dot-pulse 2s infinite cubic-bezier(.4, 0, .6, 1);
+}
+@keyframes live-dot-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(90, 138, 97, 0.7); }
+  70% { box-shadow: 0 0 0 6px rgba(90, 138, 97, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(90, 138, 97, 0); }
+}
+.jump-to-train-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 13px;
+  border-radius: 999px;
+  border: 1px solid var(--gold-dark);
+  background: var(--surface);
+  color: var(--gold-dark);
+  font: inherit;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .04em;
+  cursor: pointer;
+  white-space: nowrap;
+  flex: 0 0 auto;
+  transition: all .16s ease;
+}
+.jump-to-train-button:hover {
+  background: var(--gold-dark);
+  color: #fff;
+}
+.theme-dark .jump-to-train-button {
+  background: #23221b;
+  color: #dfc28d;
+  border-color: #8c7349;
+}
+.theme-dark .jump-to-train-button:hover {
+  background: var(--gold-dark);
+  color: #121316;
+}
+@media (max-width: 600px) {
+  .jump-to-train-bar { padding: 7px 10px; gap: 8px; }
+  .jump-to-train-status { font-size: 8.5px; }
+  .jump-next-halt { display: none; }
+  .jump-to-train-button { padding: 4px 10px; font-size: 8px; }
+}
+
+/* 3. Upcoming Stops & Visual Track Line (Section 4.1) */
+.stop-row.is-upcoming:not(:last-child) .stop-marker::after,
+.stop-row.active:not(:last-child) .stop-marker::after {
+  content: '';
+  position: absolute;
+  width: 0;
+  height: 24px;
+  top: 6px;
+  left: 2px;
+  border-left: 1px dashed color-mix(in srgb, var(--text-muted) 55%, var(--line));
+  background: transparent;
+}
+.stop-marker.marker-upcoming {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--text-muted) 55%, var(--line));
+}
+.vertical-track-upcoming {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 14px;
+  width: 0;
+  border-left: 1px dashed color-mix(in srgb, var(--text-muted) 45%, var(--line));
+  z-index: 1;
+}
+
+/* 4. Estimated Badges & Subtext Formatting (Section 4.1 & 4.5) */
+.stop-time-status.status-estimated {
+  border: 1px dashed currentColor !important;
+  background: transparent !important;
+  font-weight: 700;
+  letter-spacing: .05em;
+}
+.stop-time-status.status-estimated.delay-late {
+  color: #98483d;
+  background: #fbf5f4 !important;
+  border-color: #d8a8a2 !important;
+}
+.stop-time-status.status-estimated.delay-on-time,
+.stop-time-status.status-estimated.delay-early {
+  color: #4e7453;
+  background: #f4f8f4 !important;
+  border-color: #a4cca8 !important;
+}
+.theme-dark .stop-time-status.status-estimated.delay-late {
+  color: #f0a79c;
+  background: #2b1f1e !important;
+  border-color: #633b35 !important;
+}
+.theme-dark .stop-time-status.status-estimated.delay-on-time,
+.theme-dark .stop-time-status.status-estimated.delay-early {
+  color: #b2d4b5;
+  background: #1d281f !important;
+  border-color: #3b543e !important;
+}
+.stop-time-detail.detail-estimated {
+  font-style: italic;
+  opacity: .88;
+}
+
+/* 5. Pass-Through Row Deduplication & Skipped Pings (Section 4.3 & 4.5) */
+.stop-row.pass-through-stop {
+  padding: 6px 0;
+  opacity: .84;
+}
+.stop-row.pass-through-stop .stop-name strong {
+  font-size: 9.5px;
+  font-weight: 550;
+  color: var(--text-soft);
+}
+.pass-through-chip {
+  font-size: 7px;
+  letter-spacing: .06em;
+  padding: 1px 4px;
+  border-radius: 2px;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-weight: 650;
+  white-space: nowrap;
+}
+.theme-dark .pass-through-chip {
+  background: #202227;
+  color: #9b978f;
+}
+.clock-skipped-ping {
+  color: var(--text-muted) !important;
+  font-size: 8px !important;
+  font-weight: 550 !important;
+  letter-spacing: .02em;
 }

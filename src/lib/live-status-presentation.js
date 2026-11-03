@@ -63,6 +63,227 @@ function parseClock(value) {
   return { hour, minute };
 }
 
+export function formatMinutesAsClock(totalMinutes) {
+  const normalized = ((Math.round(totalMinutes) % 1440) + 1440) % 1440;
+  const hours = Math.floor(normalized / 60);
+  const minutes = normalized % 60;
+  const period = hours >= 12 ? 'pm' : 'am';
+  const displayHours = hours % 12 || 12;
+  return `${String(displayHours).padStart(2, '0')}:${String(minutes).padStart(2, '0')} ${period}`;
+}
+
+export function niceClock(value) {
+  if (value == null || value === '') return '—';
+  const raw = String(value).trim();
+  const clockOnly = raw.match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*(am|pm)?$/i);
+  if (clockOnly) {
+    let hours = Number(clockOnly[1]);
+    const minutes = Number(clockOnly[2]);
+    const suffix = clockOnly[3]?.toLowerCase();
+    if (suffix) hours = (hours % 12) + (suffix === 'pm' ? 12 : 0);
+    if (hours <= 23 && minutes <= 59) return formatMinutesAsClock(hours * 60 + minutes);
+    return raw;
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return raw;
+  return new Intl.DateTimeFormat('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' }).format(parsed);
+}
+
+export function clockWithDelay(scheduledValue, delayMinutes) {
+  if (!scheduledValue || typeof delayMinutes !== 'number' || !Number.isFinite(delayMinutes)) return niceClock(scheduledValue);
+  const raw = String(scheduledValue).trim();
+  const clockOnly = raw.match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*(am|pm)?$/i);
+  if (clockOnly) {
+    let hours = Number(clockOnly[1]);
+    const minutes = Number(clockOnly[2]);
+    const suffix = clockOnly[3]?.toLowerCase();
+    if (suffix) hours = (hours % 12) + (suffix === 'pm' ? 12 : 0);
+    if (hours <= 23 && minutes <= 59) return formatMinutesAsClock(hours * 60 + minutes + delayMinutes);
+    return niceClock(scheduledValue);
+  }
+  const parsed = new Date(scheduledValue);
+  if (Number.isNaN(parsed.getTime())) return niceClock(scheduledValue);
+  return niceClock(new Date(parsed.getTime() + delayMinutes * 60_000).toISOString());
+}
+
+export function delayState(value) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 'unknown';
+  if (value > 0) return 'late';
+  if (value < 0) return 'early';
+  return 'on-time';
+}
+
+export function formatDelayDelta(minutes) {
+  if (typeof minutes !== 'number' || !Number.isFinite(minutes)) return null;
+  const rounded = Math.round(minutes);
+  if (rounded === 0) return null;
+  const abs = Math.abs(rounded);
+  const hours = Math.floor(abs / 60);
+  const mins = abs % 60;
+  const parts = [];
+  if (hours > 0) parts.push(`${hours}h`);
+  if (mins > 0 || hours === 0) parts.push(`${mins}m`);
+  const sign = rounded > 0 ? '+' : '-';
+  return `${sign}${parts.join(' ')}`;
+}
+
+export function delayLabel(value, isUpcoming = false) {
+  const state = delayState(value);
+  const delta = formatDelayDelta(value);
+  let base;
+  if (state === 'late') base = delta ? `LATE (${delta})` : 'LATE';
+  else if (state === 'early') base = delta ? `EARLY (${delta})` : 'EARLY';
+  else if (state === 'on-time') base = 'ON TIME';
+  else base = isUpcoming ? 'SCHEDULED' : 'STATUS UNAVAILABLE';
+
+  return isUpcoming && state !== 'unknown' ? `EST. ${base}` : base;
+}
+
+export function stopDelayValue(stop) {
+  if (typeof stop?.delayArrival === 'number' && Number.isFinite(stop.delayArrival)) return stop.delayArrival;
+  if (typeof stop?.delayDeparture === 'number' && Number.isFinite(stop.delayDeparture)) return stop.delayDeparture;
+  return null;
+}
+
+/**
+ * Format stop timing for timeline rows.
+ * Critical contract: An upcoming stop has NOT been reached yet and must NEVER
+ * be labeled ACTUAL. If the provider returned a projection in the actual field,
+ * it is treated strictly as an estimate.
+ */
+export function formatStopPresentation(stop, fallbackDelay = null, isUpcoming = false, hasPassed = false) {
+  if (!stop || typeof stop !== 'object') {
+    return {
+      displayTime: '—',
+      detail: 'SCHEDULED TIME',
+      state: 'unknown',
+      statusLabel: 'SCHEDULED',
+      hasActual: false,
+      hasEstimate: false,
+      isUpcoming: false,
+      usesFallbackDelay: false,
+      delayMinutes: null,
+    };
+  }
+  const usesArrival = Boolean(stop.scheduledArrival || stop.actualArrival);
+  const scheduled = (usesArrival ? stop.scheduledArrival : stop.scheduledDeparture)
+    || stop.scheduledArrival || stop.scheduledDeparture || null;
+  const rawActual = usesArrival
+    ? (stop.actualArrival || (!stop.scheduledArrival ? stop.actualDeparture : null) || null)
+    : (stop.actualDeparture || (!stop.scheduledDeparture ? stop.actualArrival : null) || null);
+
+  // Future/upcoming stops are NEVER actual historical arrivals.
+  const hasActual = !isUpcoming && Boolean(rawActual);
+  const explicitDelay = stopDelayValue(stop);
+  const usesFallbackDelay = explicitDelay === null && isUpcoming && typeof fallbackDelay === 'number' && Number.isFinite(fallbackDelay);
+  const delay = explicitDelay !== null ? explicitDelay : usesFallbackDelay ? fallbackDelay : null;
+  const state = delayState(delay);
+  const hasEstimate = isUpcoming && (Boolean(rawActual) || (Boolean(scheduled) && typeof delay === 'number'));
+
+  let displayTime;
+  if (hasActual) {
+    displayTime = niceClock(rawActual);
+  } else if (isUpcoming && rawActual) {
+    // If the provider returned a projected time in the actual field for an upcoming stop, use it as estimate
+    displayTime = niceClock(rawActual);
+  } else if (hasEstimate && scheduled && typeof delay === 'number') {
+    displayTime = clockWithDelay(scheduled, delay);
+  } else if (scheduled) {
+    displayTime = niceClock(scheduled);
+  } else {
+    displayTime = rawActual ? niceClock(rawActual) : '—';
+  }
+
+  let detail;
+  if (hasActual) {
+    detail = `ACTUAL · SCHED ${niceClock(scheduled)}`;
+  } else if (isUpcoming) {
+    detail = usesFallbackDelay
+      ? `EST. FROM CURRENT DELAY · SCHED ${niceClock(scheduled)}`
+      : `ESTIMATED · SCHED ${niceClock(scheduled)}`;
+  } else if (scheduled) {
+    detail = `SCHEDULED TIME · ${niceClock(scheduled)}`;
+  } else {
+    detail = 'SCHEDULED TIME';
+  }
+
+  let statusLabel;
+  if (isUpcoming) {
+    statusLabel = delayLabel(delay, true);
+  } else if (hasActual) {
+    statusLabel = delayLabel(delay, false);
+  } else if (state === 'unknown') {
+    statusLabel = hasPassed ? 'REPORTED' : 'SCHEDULED';
+  } else {
+    statusLabel = delayLabel(delay, false);
+  }
+
+  return {
+    displayTime,
+    detail,
+    state,
+    statusLabel,
+    hasActual,
+    hasEstimate,
+    isUpcoming,
+    usesFallbackDelay,
+    delayMinutes: delay,
+  };
+}
+
+/**
+ * Format pass-through stop presentation:
+ * Deduplicates labels (eliminates duplicate NO SCHEDULED HALT).
+ * Formats skipped provider pings gracefully on past pass-through points.
+ */
+export function formatPassThroughPresentation(stop, fallbackDelay = null, isUpcoming = false, hasPassed = false) {
+  const base = formatStopPresentation(stop, fallbackDelay, isUpcoming, hasPassed);
+  const scheduled = stop?.scheduledArrival || stop?.scheduledDeparture;
+
+  if (isUpcoming) {
+    return {
+      ...base,
+      state: 'unknown',
+      statusLabel: 'PASS',
+      detail: '',
+      displayTime: base.displayTime !== '—' ? `${base.displayTime} · PASS` : 'PASS',
+      skippedPing: false,
+    };
+  }
+
+  if (base.hasActual) {
+    return {
+      ...base,
+      state: 'unknown',
+      statusLabel: 'PASS',
+      detail: scheduled ? `REPORTED PASS · SCHED ${niceClock(scheduled)}` : 'REPORTED PASS',
+      displayTime: `${base.displayTime} · PASS`,
+      skippedPing: false,
+    };
+  }
+
+  if (hasPassed && !base.hasActual) {
+    // Missing provider timestamp on past pass-through station: format skipped ping explicitly
+    return {
+      ...base,
+      state: 'unknown',
+      statusLabel: 'SKIPPED PING',
+      detail: scheduled ? `Sched ${niceClock(scheduled)}` : '',
+      displayTime: 'PASS TIME NOT REPORTED',
+      skippedPing: true,
+    };
+  }
+
+  return {
+    ...base,
+    state: 'unknown',
+    statusLabel: 'PASS',
+    detail: '',
+    displayTime: `${base.displayTime} · PASS`,
+    skippedPing: false,
+  };
+}
+
 function istDateParts(date) {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit',

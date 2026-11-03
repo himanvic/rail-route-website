@@ -8,7 +8,20 @@ import {
 import './style.css';
 import { getStaticStations, getStaticTrainSchedule, searchStaticStations, searchStaticTrainsBetween } from './lib/static-timetable.js';
 import { buildLiveRouteRows, isPassThroughStop } from './lib/live-route-view.js';
-import { estimateStopArrivalDate, getCompactLiveStopIndexes, getNextOfficialHaltIndexes, selectForecastForArrival } from './lib/live-status-presentation.js';
+import {
+  estimateStopArrivalDate,
+  getCompactLiveStopIndexes,
+  getNextOfficialHaltIndexes,
+  selectForecastForArrival,
+  niceClock,
+  clockWithDelay,
+  delayState,
+  delayLabel,
+  formatDelayDelta,
+  formatStopPresentation,
+  formatPassThroughPresentation,
+  stopDelayValue,
+} from './lib/live-status-presentation.js';
 
 const OFFICIAL_PNR_URL = 'https://www.indianrail.gov.in/enquiry/PNR/PnrEnquiry.html';
 const LAST_STATUS_KEY = 'rail-route:last-train-status:v1';
@@ -31,95 +44,6 @@ function niceDateTime(value) {
     day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true,
     timeZone: 'Asia/Kolkata',
   }).format(parsed) + ' IST';
-}
-
-function formatMinutesAsClock(totalMinutes) {
-  const wrapped = ((Math.round(totalMinutes) % 1440) + 1440) % 1440;
-  const hours24 = Math.floor(wrapped / 60);
-  const minutes = wrapped % 60;
-  const hours12 = hours24 % 12 || 12;
-  return `${String(hours12).padStart(2, '0')}:${String(minutes).padStart(2, '0')} ${hours24 >= 12 ? 'pm' : 'am'}`;
-}
-
-function niceClock(value) {
-  if (value == null || value === '') return '—';
-  const raw = String(value).trim();
-  // Timetable feeds sometimes use a clock-only value (HH:mm) rather than an ISO timestamp.
-  const clockOnly = raw.match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*(am|pm)?$/i);
-  if (clockOnly) {
-    let hours = Number(clockOnly[1]);
-    const minutes = Number(clockOnly[2]);
-    const suffix = clockOnly[3]?.toLowerCase();
-    if (suffix) hours = (hours % 12) + (suffix === 'pm' ? 12 : 0);
-    if (hours <= 23 && minutes <= 59) return formatMinutesAsClock(hours * 60 + minutes);
-    return raw;
-  }
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return raw;
-  return new Intl.DateTimeFormat('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' }).format(parsed);
-}
-
-function clockWithDelay(scheduledValue, delayMinutes) {
-  if (!scheduledValue || typeof delayMinutes !== 'number' || !Number.isFinite(delayMinutes)) return niceClock(scheduledValue);
-  const raw = String(scheduledValue).trim();
-  const clockOnly = raw.match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*(am|pm)?$/i);
-  if (clockOnly) {
-    let hours = Number(clockOnly[1]);
-    const minutes = Number(clockOnly[2]);
-    const suffix = clockOnly[3]?.toLowerCase();
-    if (suffix) hours = (hours % 12) + (suffix === 'pm' ? 12 : 0);
-    if (hours <= 23 && minutes <= 59) return formatMinutesAsClock(hours * 60 + minutes + delayMinutes);
-    return niceClock(scheduledValue);
-  }
-  const parsed = new Date(scheduledValue);
-  if (Number.isNaN(parsed.getTime())) return niceClock(scheduledValue);
-  return niceClock(new Date(parsed.getTime() + delayMinutes * 60_000).toISOString());
-}
-
-function delayState(value) {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return 'unknown';
-  if (value > 0) return 'late';
-  if (value < 0) return 'early';
-  return 'on-time';
-}
-
-function delayLabel(value) {
-  const state = delayState(value);
-  if (state === 'late') return 'LATE';
-  if (state === 'early') return 'EARLY';
-  if (state === 'on-time') return 'ON TIME';
-  return 'STATUS UNAVAILABLE';
-}
-
-function stopDelayValue(stop) {
-  if (typeof stop?.delayArrival === 'number' && Number.isFinite(stop.delayArrival)) return stop.delayArrival;
-  if (typeof stop?.delayDeparture === 'number' && Number.isFinite(stop.delayDeparture)) return stop.delayDeparture;
-  return null;
-}
-
-function stopTimePresentation(stop, fallbackDelay = null, isUpcoming = false) {
-  const usesArrival = Boolean(stop.scheduledArrival || stop.actualArrival);
-  const scheduled = (usesArrival ? stop.scheduledArrival : stop.scheduledDeparture)
-    || stop.scheduledArrival || stop.scheduledDeparture || null;
-  const actual = usesArrival
-    ? (stop.actualArrival || (!stop.scheduledArrival ? stop.actualDeparture : null) || null)
-    : (stop.actualDeparture || (!stop.scheduledDeparture ? stop.actualArrival : null) || null);
-  const explicitDelay = stopDelayValue(stop);
-  const usesFallbackDelay = explicitDelay === null && isUpcoming && typeof fallbackDelay === 'number' && Number.isFinite(fallbackDelay);
-  const delay = explicitDelay !== null ? explicitDelay : usesFallbackDelay ? fallbackDelay : null;
-  const state = delayState(delay);
-  const hasActual = Boolean(actual);
-  const hasEstimate = !hasActual && Boolean(scheduled) && typeof delay === 'number';
-  const displayTime = hasActual ? niceClock(actual) : hasEstimate ? clockWithDelay(scheduled, delay) : niceClock(scheduled);
-  const detail = hasActual
-    ? `ACTUAL · SCHED ${niceClock(scheduled)}`
-    : hasEstimate
-      ? `${usesFallbackDelay ? 'EST. FROM CURRENT DELAY' : 'EST.'} · SCHED ${niceClock(scheduled)}`
-      : 'SCHEDULED TIME';
-  const statusLabel = hasEstimate
-    ? `EST. ${delayLabel(delay)}`
-    : state === 'unknown' ? (hasActual ? 'REPORTED' : 'SCHEDULED') : delayLabel(delay);
-  return { displayTime, detail, state, statusLabel, hasActual, hasEstimate, usesFallbackDelay };
 }
 
 function getStoredStatus(trainNumber) {
@@ -270,13 +194,9 @@ function StatusResult({ result, mode, onRefresh, refreshing }) {
   const statusText = String(data?.status || 'status unavailable').replaceAll('-', ' ');
   const currentDelayMinutes = [data?.delayMinutes, current?.delayMinutes, current?.delay?.minutes]
     .find((value) => typeof value === 'number' && Number.isFinite(value));
-  const hasEstimatedUpcomingStops = hasReportedRoutePosition && typeof currentDelayMinutes === 'number' && safeRoute
+  const hasEstimatedUpcomingStops = hasReportedRoutePosition && safeRoute
     .slice(routeCurrentIndex + 1)
-    .some((stop) => {
-      const scheduled = stop.scheduledArrival || stop.scheduledDeparture;
-      const actual = stop.actualArrival || stop.actualDeparture;
-      return Boolean(scheduled && !actual && stopDelayValue(stop) === null);
-    });
+    .some((stop) => Boolean(stop.scheduledArrival || stop.scheduledDeparture));
 
   React.useEffect(() => {
     setGpsState('idle');
@@ -504,143 +424,190 @@ function StatusResult({ result, mode, onRefresh, refreshing }) {
         </div>
         <button className="icon-button" onClick={onRefresh} disabled={refreshing} type="button" aria-label="Refresh train status" title="Refresh status"><RefreshCw size={16} className={refreshing ? 'spin' : ''} /></button>
       </div>
-      <div className="result-heading">
-        <div>
-          <p className="eyebrow">{data.trainNumber || train.number || 'TRAIN'}</p>
-          <h2>{data.trainName || train.name || 'Train status'}</h2>
-          <p className="result-status">{statusText}</p>
-        </div>
-        <div className={`delay-pill delay-${delayState(data.delayMinutes)}`}>
-          <Clock3 size={15} /> {delayLabel(data.delayMinutes)}
-        </div>
-      </div>
-      <div className="journey-line">
-        <div className="journey-place">
-          <span className="journey-code">{train.source?.code || route[0]?.stationCode || '—'}</span>
-          <strong>{train.source?.name || route[0]?.stationName || 'Origin'}</strong>
-          <span>{route[0]?.scheduledDeparture ? `Dep. ${niceClock(route[0].scheduledDeparture)}` : 'Origin station'}</span>
-        </div>
-        <div className="journey-track" aria-label={hasReportedRoutePosition ? `Reported train position near ${reportedStationName}` : 'Live train position unavailable for the listed route'}>
-          <div className="track-trackline">
-            <span className="track-trackline-progress" style={{ width: `${routeProgressPercent ?? 0}%` }} />
-          </div>
-          <span className="track-progress">{routePositionLabel}</span>
-          <span className="track-position-note">The vertical train below marks the latest provider-reported route position.</span>
-        </div>
-        <div className="journey-place place-destination">
-          <span className="journey-code">{train.destination?.code || route[route.length - 1]?.stationCode || '—'}</span>
-          <strong>{train.destination?.name || route[route.length - 1]?.stationName || 'Destination'}</strong>
-          <span>{route[route.length - 1]?.scheduledArrival ? `Arr. ${niceClock(route[route.length - 1].scheduledArrival)}` : 'Destination station'}</span>
-        </div>
-      </div>
-      <div className="result-metrics">
-        <div className="metric"><span>Last reported station</span><strong>{current.stationCode || 'Not supplied'}</strong><small>{previous?.stationName || previous?.stationCode || 'No previous halt supplied'}</small></div>
-        <div className="metric"><span>Next halt</span><strong>{next?.stationName || next?.stationCode || 'Not supplied'}</strong><small>{typeof next?.distance === 'number' ? `${next.distance} km from previous halt` : 'Distance not supplied'}</small></div>
-        <div className="metric"><span>Reported speed</span><strong>{typeof current.speedKmh === 'number' ? `${Math.round(current.speedKmh)} km/h` : '—'}</strong><small>Only when provider supplies it</small></div>
-      </div>
-      <section className="device-gps-panel" aria-labelledby="device-gps-heading">
-        <div className="device-gps-copy">
-          <p className="eyebrow"><MapPin size={13} aria-hidden="true"/> ON-DEVICE GPS · NO API CALL</p>
-          <h3 id="device-gps-heading">Compare your location with this route</h3>
-          <p>Your phone's location is not the train's location. We compare it locally with station coordinates when available; it cannot confirm train movement or delay.</p>
-        </div>
-        <button className="button button-outline device-gps-button" type="button" onClick={checkDeviceGps} disabled={gpsState === 'loading'}>
-          {gpsState === 'loading' ? <><span className="button-loader"/> Locating…</> : <><MapPin size={16}/> {gpsState === 'ready' ? 'Refresh my GPS' : 'Use my GPS'}</>}
-        </button>
-        {gpsMessage && <div className={`device-gps-message ${gpsState === 'error' ? 'device-gps-error' : ''}`} role="status">
-          {gpsState === 'loading' ? <span className="button-loader"/> : gpsState === 'error' ? <WifiOff size={15}/> : <ShieldCheck size={15}/>}
-          <span>{gpsMessage}</span>
-        </div>}
-        {deviceGps && <div className="device-gps-result">
-          <div><span>Location accuracy</span><strong>{deviceGps.accuracy != null ? `±${Math.round(deviceGps.accuracy).toLocaleString('en-IN')} m` : 'Not supplied'}</strong></div>
-          <div><span>Location captured</span><strong>{niceDateTime(deviceGps.capturedAt)}</strong></div>
-          {nearestRouteStop ? <div className="device-gps-nearest"><span>Closest station on this train's listed route</span><strong>{nearestRouteStop.name} <small>({nearestRouteStop.code})</small></strong><em>{nearestRouteStop.distanceKm < 1 ? `${Math.round(nearestRouteStop.distanceKm * 1000)} m` : `${nearestRouteStop.distanceKm.toFixed(1)} km`} from your device</em></div> : <div className="device-gps-nearest"><span>Route match</span><strong>Unavailable</strong><em>The local dataset may not include coordinates for these stops.</em></div>}
-        </div>}
-        <p className="device-gps-privacy"><ShieldCheck size={13} aria-hidden="true"/> Location is requested only when you click, kept in this page's memory, and not sent to RailRadar or saved to a database.</p>
-      </section>
-      {safeRoute.length > 0 && (
-        <div className={`route-stops ${fullRouteOpen ? 'route-stops-expanded' : 'route-stops-compact'}`}>
-          <div className="route-stops-heading">
-            <div className="route-stops-title">
-              <span>{fullRouteOpen ? 'Complete train route' : 'Around your train'}</span>
-              <small>{fullRouteOpen ? `${routeHaltIndexes.length} official halts${passThroughCount ? ` · ${passThroughCount} pass-through available` : ''}` : hasReportedRoutePosition ? 'Previous halt · reported position · next two halts' : 'Current position unavailable · showing the route start'}</small>
+      <div className="result-grid-desktop">
+        <aside className="result-column-sidebar">
+          <div className="result-heading">
+            <div>
+              <p className="eyebrow">{data.trainNumber || train.number || 'TRAIN'}</p>
+              <h2>{data.trainName || train.name || 'Train status'}</h2>
+              <p className="result-status">{statusText}</p>
             </div>
-            <button className="route-full-toggle" type="button" aria-expanded={fullRouteOpen} onClick={() => setFullRouteOpen((open) => !open)}>
-              {fullRouteOpen ? 'Show nearby stops' : `View full route · ${routeHaltIndexes.length} halts`}
-              <ChevronDown size={14} className={fullRouteOpen ? 'route-full-toggle-open' : ''}/>
-            </button>
+            <div className={`delay-pill delay-${delayState(data.delayMinutes)}`}>
+              <Clock3 size={15} /> {delayLabel(data.delayMinutes, false)}
+            </div>
           </div>
-          {hasReportedRoutePosition && <div className="route-motion-note"><TrainFront size={14} aria-hidden="true"/><span>{fullRouteOpen ? 'The vertical train marks the provider’s latest reported position. Click a segment between official halts to reveal pass-through stations.' : 'A short view around the last provider-reported station. Open the full route to inspect every halt and expand pass-through segments.'}</span></div>}
-          {hasEstimatedUpcomingStops && <div className="route-estimate-note"><Clock3 size={13} aria-hidden="true"/><span>Upcoming times marked EST. carry forward the latest reported delay as a guide; actual delays may change.</span></div>}
-          {passThroughCount === 0 && !routeHasHaltMetadata && fullRouteOpen && <div className="route-estimate-note"><Clock3 size={13} aria-hidden="true"/><span>This provider response does not identify pass-through stations, so all supplied route points remain visible.</span></div>}
-          <div className="stops-list vertical-train-timeline" ref={stopsListRef}>
-            {hasReportedRoutePosition && <div className="vertical-train-layer" aria-hidden="true">
-              <span className="vertical-track-sleepers" />
-              <span className="vertical-track-rails" />
-              <span className="vertical-track-progress" style={{ height: `${trainGraphic?.progress || 0}px` }} />
-              {trainGraphic && <div className={`vertical-train-set ${trainGraphic.trailDown ? 'trail-down' : ''}`} style={{ top: `${trainGraphic.top}px` }}>
-                <span className="route-coach coach-gold"/><span className="route-coach"/><span className="route-coach"/><span className="route-coach"/>
-                <span className="route-engine"><TrainFront size={13} strokeWidth={2.2} aria-hidden="true"/></span>
-              </div>}
+          <div className="journey-line">
+            <div className="journey-place">
+              <span className="journey-code">{train.source?.code || route[0]?.stationCode || '—'}</span>
+              <strong>{train.source?.name || route[0]?.stationName || 'Origin'}</strong>
+              <span>{route[0]?.scheduledDeparture ? `Dep. ${niceClock(route[0].scheduledDeparture)}` : 'Origin station'}</span>
+            </div>
+            <div className="journey-track" aria-label={hasReportedRoutePosition ? `Reported train position near ${reportedStationName}` : 'Live train position unavailable for the listed route'}>
+              <div className="track-trackline">
+                <span className="track-trackline-progress" style={{ width: `${routeProgressPercent ?? 0}%` }} />
+              </div>
+              <span className="track-progress">{routePositionLabel}</span>
+              <span className="track-position-note">The vertical train marks the provider-reported position.</span>
+            </div>
+            <div className="journey-place place-destination">
+              <span className="journey-code">{train.destination?.code || route[route.length - 1]?.stationCode || '—'}</span>
+              <strong>{train.destination?.name || route[route.length - 1]?.stationName || 'Destination'}</strong>
+              <span>{route[route.length - 1]?.scheduledArrival ? `Arr. ${niceClock(route[route.length - 1].scheduledArrival)}` : 'Destination station'}</span>
+            </div>
+          </div>
+          <div className="result-metrics">
+            <div className="metric"><span>Last reported station</span><strong>{current.stationCode || 'Not supplied'}</strong><small>{previous?.stationName || previous?.stationCode || 'No previous halt supplied'}</small></div>
+            <div className="metric"><span>Next halt</span><strong>{next?.stationName || next?.stationCode || 'Not supplied'}</strong><small>{typeof next?.distance === 'number' ? `${next.distance} km from previous halt` : 'Distance not supplied'}</small></div>
+            <div className="metric"><span>Reported speed</span><strong>{typeof current.speedKmh === 'number' ? `${Math.round(current.speedKmh)} km/h` : '—'}</strong><small>Only when provider supplies it</small></div>
+          </div>
+          <section className="device-gps-panel" aria-labelledby="device-gps-heading">
+            <div className="device-gps-copy">
+              <p className="eyebrow"><MapPin size={13} aria-hidden="true"/> ON-DEVICE GPS · NO API CALL</p>
+              <h3 id="device-gps-heading">Compare your location with this route</h3>
+              <p>Your phone's location is not the train's location. We compare it locally with station coordinates when available; it cannot confirm train movement or delay.</p>
+            </div>
+            <button className="button button-outline device-gps-button" type="button" onClick={checkDeviceGps} disabled={gpsState === 'loading'}>
+              {gpsState === 'loading' ? <><span className="button-loader"/> Locating…</> : <><MapPin size={16}/> {gpsState === 'ready' ? 'Refresh my GPS' : 'Use my GPS'}</>}
+            </button>
+            {gpsMessage && <div className={`device-gps-message ${gpsState === 'error' ? 'device-gps-error' : ''}`} role="status">
+              {gpsState === 'loading' ? <span className="button-loader"/> : gpsState === 'error' ? <WifiOff size={15}/> : <ShieldCheck size={15}/>}
+              <span>{gpsMessage}</span>
             </div>}
-            {displayedRouteRows.map((row) => {
-              if (row.type === 'segment') {
-                const fromStop = route[row.startIndex];
-                const toStop = route[row.endIndex];
-                return <div className="route-segment-control" key={`segment-${row.key}`}>
-                  <span className="route-segment-connector" aria-hidden="true"/>
-                  <button className="route-segment-toggle" type="button" aria-expanded={row.expanded} disabled={row.activeInside} onClick={() => toggleRouteSegment(row.key)}>
-                    <span className="route-segment-copy"><strong>{row.passIndexes.length} pass-through {row.passIndexes.length === 1 ? 'station' : 'stations'}</strong><small>Between {routeStopName(fromStop)} and {routeStopName(toStop)}</small></span>
-                    <span className="route-segment-action">{row.activeInside ? 'Current position' : row.expanded ? 'Hide' : 'Show'} <ChevronDown size={14} className={row.expanded ? 'segment-chevron-open' : ''}/></span>
-                  </button>
-                </div>;
-              }
-              const stop = route[row.index];
-              const index = row.index;
-              const passThrough = Boolean(row.passThrough);
-              const active = routeStopCode(stop) === routeCurrentCode;
-              const upcoming = hasReportedRoutePosition && index > routeCurrentIndex;
-              const rawTiming = stopTimePresentation(stop, currentDelayMinutes, upcoming);
-              const timing = passThrough ? {
-                ...rawTiming,
-                state: 'unknown',
-                statusLabel: rawTiming.hasActual ? 'PASS-THROUGH · REPORTED' : 'PASS-THROUGH',
-                detail: rawTiming.hasActual ? `REPORTED PASS TIME · SCHED ${niceClock(stop.scheduledArrival || stop.scheduledDeparture)}` : 'NO SCHEDULED HALT',
-              } : rawTiming;
-              const stationName = routeStopName(stop);
-              return <div data-route-index={index} ref={active ? activeStopRef : null} className={`stop-row ${active ? 'active' : ''} ${timing.hasEstimate ? 'estimated' : ''} ${passThrough ? 'pass-through-stop' : ''}`} key={`${stop.sequence || index}-${routeStopCode(stop)}`}>
-                <span className="stop-marker" />
-                <div className="stop-name">
-                  <strong>{stationName}</strong>
-                  <div className="stop-name-meta">
-                    <small>{routeStopCode(stop) || 'Station code unavailable'}</small>
-                    {passThrough && <span className="pass-through-label">NO SCHEDULED HALT</span>}
-                    {weatherByCode[routeStopCode(stop)] && <span className="station-weather" title={`Modelled weather forecast near ${stationName}, around ${niceClock(weatherByCode[routeStopCode(stop)].forecastTime)} IST; not a platform sensor reading`}>
-                      <WeatherGlyph code={weatherByCode[routeStopCode(stop)].weatherCode} isDay={weatherByCode[routeStopCode(stop)].isDay}/>
-                      <b>{Math.round(weatherByCode[routeStopCode(stop)].temperatureC)}°C</b>
-                      <span>at arrival</span>
-                    </span>}
-                    {!weatherByCode[routeStopCode(stop)] && weatherState === 'loading' && weatherTargetCodes.includes(routeStopCode(stop)) && <span className="station-weather-loading">Weather…</span>}
+            {deviceGps && <div className="device-gps-result">
+              <div><span>Location accuracy</span><strong>{deviceGps.accuracy != null ? `±${Math.round(deviceGps.accuracy).toLocaleString('en-IN')} m` : 'Not supplied'}</strong></div>
+              <div><span>Location captured</span><strong>{niceDateTime(deviceGps.capturedAt)}</strong></div>
+              {nearestRouteStop ? <div className="device-gps-nearest"><span>Closest station on this train's listed route</span><strong>{nearestRouteStop.name} <small>({nearestRouteStop.code})</small></strong><em>{nearestRouteStop.distanceKm < 1 ? `${Math.round(nearestRouteStop.distanceKm * 1000)} m` : `${nearestRouteStop.distanceKm.toFixed(1)} km`} from your device</em></div> : <div className="device-gps-nearest"><span>Route match</span><strong>Unavailable</strong><em>The local dataset may not include coordinates for these stops.</em></div>}
+            </div>}
+            <p className="device-gps-privacy"><ShieldCheck size={13} aria-hidden="true"/> Location is requested only when you click, kept in this page's memory, and not sent to RailRadar or saved to a database.</p>
+          </section>
+        </aside>
+
+        <div className="result-column-main">
+          {safeRoute.length > 0 && (
+            <div className={`route-stops ${fullRouteOpen ? 'route-stops-expanded' : 'route-stops-compact'}`}>
+              <div className="route-stops-heading">
+                <div className="route-stops-title">
+                  <span>{fullRouteOpen ? 'Complete train route' : 'Around your train'}</span>
+                  <small>{fullRouteOpen ? `${routeHaltIndexes.length} official halts${passThroughCount ? ` · ${passThroughCount} pass-through available` : ''}` : hasReportedRoutePosition ? 'Previous halt · reported position · next two halts' : 'Current position unavailable · showing the route start'}</small>
+                </div>
+                <button className="route-full-toggle" type="button" aria-expanded={fullRouteOpen} onClick={() => setFullRouteOpen((open) => !open)}>
+                  {fullRouteOpen ? 'Show nearby stops' : `View full route · ${routeHaltIndexes.length} halts`}
+                  <ChevronDown size={14} className={fullRouteOpen ? 'route-full-toggle-open' : ''}/>
+                </button>
+              </div>
+
+              {hasReportedRoutePosition && (
+                <div className="jump-to-train-bar">
+                  <div className="jump-to-train-status">
+                    <span className="live-pulse-dot" aria-hidden="true"/>
+                    <span>Live at <strong>{reportedStationName}</strong> <small>({routeCurrentIndex >= 0 ? `Stop ${routeCurrentIndex + 1} of ${route.length}` : ''})</small></span>
+                    {next?.stationName && <span className="jump-next-halt">· Next: <em>{next.stationName}</em></span>}
                   </div>
+                  <button
+                    type="button"
+                    className="jump-to-train-button"
+                    onClick={() => {
+                      activeStopRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    }}
+                    aria-label={`Jump to current train position at ${reportedStationName}`}
+                  >
+                    Jump to Train ↓
+                  </button>
                 </div>
-                <div className="stop-time">
-                  <strong className={`stop-time-clock delay-${timing.state}`}>{timing.displayTime}</strong>
-                  <small className={`stop-time-status delay-${timing.state}`}>{timing.statusLabel}</small>
-                  <small className="stop-time-detail">{timing.detail}</small>
-                </div>
-                {active && <span className="here-tag">REPORTED HERE</span>}
-              </div>;
-            })}
+              )}
+
+              {hasReportedRoutePosition && <div className="route-motion-note"><TrainFront size={14} aria-hidden="true"/><span>{fullRouteOpen ? 'The vertical train marks the provider’s latest reported position. Click a segment between official halts to reveal pass-through stations.' : 'A short view around the last provider-reported station. Open the full route to inspect every halt and expand pass-through segments.'}</span></div>}
+              {hasEstimatedUpcomingStops && <div className="route-estimate-note"><Clock3 size={13} aria-hidden="true"/><span>Upcoming times marked EST. carry forward the latest reported delay as a guide; actual delays may change.</span></div>}
+              {passThroughCount === 0 && !routeHasHaltMetadata && fullRouteOpen && <div className="route-estimate-note"><Clock3 size={13} aria-hidden="true"/><span>This provider response does not identify pass-through stations, so all supplied route points remain visible.</span></div>}
+
+              <div className="stops-list vertical-train-timeline" ref={stopsListRef}>
+                {hasReportedRoutePosition && <div className="vertical-train-layer" aria-hidden="true">
+                  <span className="vertical-track-sleepers" />
+                  <span className="vertical-track-rails" />
+                  <span className="vertical-track-upcoming" />
+                  <span className="vertical-track-progress" style={{ height: `${trainGraphic?.progress || 0}px` }} />
+                  {trainGraphic && <div className={`vertical-train-set ${trainGraphic.trailDown ? 'trail-down' : ''}`} style={{ top: `${trainGraphic.top}px` }}>
+                    <span className="route-coach coach-gold"/><span className="route-coach"/><span className="route-coach"/><span className="route-coach"/>
+                    <span className="route-engine"><TrainFront size={13} strokeWidth={2.2} aria-hidden="true"/></span>
+                  </div>}
+                </div>}
+                {displayedRouteRows.map((row) => {
+                  if (row.type === 'segment') {
+                    const fromStop = route[row.startIndex];
+                    const toStop = route[row.endIndex];
+                    return <div className="route-segment-control" key={`segment-${row.key}`}>
+                      <span className="route-segment-connector" aria-hidden="true"/>
+                      <button className="route-segment-toggle" type="button" aria-expanded={row.expanded} disabled={row.activeInside} onClick={() => toggleRouteSegment(row.key)}>
+                        <span className="route-segment-copy"><strong>{row.passIndexes.length} pass-through {row.passIndexes.length === 1 ? 'station' : 'stations'}</strong><small>Between {routeStopName(fromStop)} and {routeStopName(toStop)}</small></span>
+                        <span className="route-segment-action">{row.activeInside ? 'Current position' : row.expanded ? 'Hide' : 'Show'} <ChevronDown size={14} className={row.expanded ? 'segment-chevron-open' : ''}/></span>
+                      </button>
+                    </div>;
+                  }
+                  const stop = route[row.index];
+                  const index = row.index;
+                  const passThrough = Boolean(row.passThrough);
+                  const active = routeStopCode(stop) === routeCurrentCode;
+                  const upcoming = hasReportedRoutePosition && index > routeCurrentIndex;
+                  const hasPassed = hasReportedRoutePosition && index <= routeCurrentIndex;
+                  const timing = passThrough
+                    ? formatPassThroughPresentation(stop, currentDelayMinutes, upcoming, hasPassed)
+                    : formatStopPresentation(stop, currentDelayMinutes, upcoming, hasPassed);
+                  const stationName = routeStopName(stop);
+
+                  return (
+                    <div
+                      data-route-index={index}
+                      data-upcoming={upcoming ? 'true' : 'false'}
+                      ref={active ? activeStopRef : null}
+                      className={`stop-row ${active ? 'active' : ''} ${upcoming ? 'is-upcoming' : 'is-passed'} ${timing.hasEstimate ? 'estimated' : ''} ${passThrough ? 'pass-through-stop' : ''}`}
+                      key={`${stop.sequence || index}-${routeStopCode(stop)}`}
+                    >
+                      <span className={`stop-marker ${upcoming ? 'marker-upcoming' : 'marker-passed'}`} />
+                      <div className="stop-name">
+                        <strong>{stationName}</strong>
+                        <div className="stop-name-meta">
+                          <small>{routeStopCode(stop) || 'Station code unavailable'}</small>
+                          {passThrough && <span className="pass-through-chip">PASS-THROUGH</span>}
+                          {weatherByCode[routeStopCode(stop)] && (
+                            <span className="station-weather" title={`Modelled weather forecast near ${stationName}, around ${niceClock(weatherByCode[routeStopCode(stop)].forecastTime)} IST; not a platform sensor reading`}>
+                              <WeatherGlyph code={weatherByCode[routeStopCode(stop)].weatherCode} isDay={weatherByCode[routeStopCode(stop)].isDay}/>
+                              <b>{Math.round(weatherByCode[routeStopCode(stop)].temperatureC)}°C</b>
+                              <span>at arrival</span>
+                            </span>
+                          )}
+                          {!weatherByCode[routeStopCode(stop)] && weatherState === 'loading' && weatherTargetCodes.includes(routeStopCode(stop)) && (
+                            <span className="station-weather-loading">Weather…</span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="stop-time">
+                        <strong className={`stop-time-clock delay-${timing.state} ${timing.skippedPing ? 'clock-skipped-ping' : ''}`}>{timing.displayTime}</strong>
+                        {timing.statusLabel && <small className={`stop-time-status delay-${timing.state} ${upcoming ? 'status-estimated' : ''}`}>{timing.statusLabel}</small>}
+                        {timing.detail && <small className={`stop-time-detail ${upcoming ? 'detail-estimated' : ''}`}>{timing.detail}</small>}
+                      </div>
+                      {active && <span className="here-tag">REPORTED HERE</span>}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          {safeRoute.length > 0 && hasReportedRoutePosition && (
+            <div className={`weather-attribution weather-${weatherState}`} aria-live="polite">
+              {weatherState === 'loading' && <span><CloudSun size={13}/> Loading arrival-time forecasts for the next two official halts…</span>}
+              {weatherState === 'ready' && <><span><Thermometer size={13}/> Next-two-halt arrival forecasts · updated {niceDateTime(weatherFetchedAt)}</span><a href="https://open-meteo.com/" target="_blank" rel="noreferrer noopener">Weather by Open-Meteo</a></>}
+              {weatherState === 'unavailable' && <span>Forecasts for the next two official halts are unavailable. Train status is unaffected.</span>}
+            </div>
+          )}
+          {Array.isArray(data.exceptions) && data.exceptions.length > 0 && (
+            <div className="exception-note"><ShieldCheck size={17}/><div><strong>Service notice</strong>{data.exceptions.map((item, i) => <p key={i}>{item.message || item.type || 'An operational update was reported.'}</p>)}</div></div>
+          )}
+          <div className="result-footnote">
+            <div className="result-timestamps"><IconText icon={Clock3}>Retrieved {niceDateTime(result.retrievedAt)}</IconText>{result.providerTimestamp && <span>Provider updated {niceDateTime(result.providerTimestamp)}</span>}</div>
+            <span>{isStale ? 'This result may be out of date. Refresh to try the live source again.' : 'Live information depends on the external data provider.'}</span>
           </div>
         </div>
-      )}
-      {safeRoute.length > 0 && hasReportedRoutePosition && <div className={`weather-attribution weather-${weatherState}`} aria-live="polite">
-        {weatherState === 'loading' && <span><CloudSun size={13}/> Loading arrival-time forecasts for the next two official halts…</span>}
-        {weatherState === 'ready' && <><span><Thermometer size={13}/> Next-two-halt arrival forecasts · updated {niceDateTime(weatherFetchedAt)}</span><a href="https://open-meteo.com/" target="_blank" rel="noreferrer noopener">Weather by Open-Meteo</a></>}
-        {weatherState === 'unavailable' && <span>Forecasts for the next two official halts are unavailable. Train status is unaffected.</span>}
-      </div>}
-      {Array.isArray(data.exceptions) && data.exceptions.length > 0 && <div className="exception-note"><ShieldCheck size={17}/><div><strong>Service notice</strong>{data.exceptions.map((item, i) => <p key={i}>{item.message || item.type || 'An operational update was reported.'}</p>)}</div></div>}
-      <div className="result-footnote"><div className="result-timestamps"><IconText icon={Clock3}>Retrieved {niceDateTime(result.retrievedAt)}</IconText>{result.providerTimestamp && <span>Provider updated {niceDateTime(result.providerTimestamp)}</span>}</div><span>{isStale ? 'This result may be out of date. Refresh to try the live source again.' : 'Live information depends on the external data provider.'}</span></div>
+      </div>
     </section>
   );
 }
