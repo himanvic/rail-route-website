@@ -1075,26 +1075,28 @@ function App() {
         </section>
 
         <section className="search-section wrap" id="live-search">
-          <div className="section-intro">
-            <p className="eyebrow">LIVE RUNNING STATUS</p>
-            <h2>Start with your<br/><em>train number.</em></h2>
-            <p>Check the latest response supplied by our configured data provider. Every result includes its retrieval time.</p>
-            <div className="search-trust-list"><IconText icon={ShieldCheck}>API key stays server-side</IconText><IconText icon={Clock3}>Timestamped results</IconText></div>
+          <div className="search-query-row">
+            <div className="section-intro">
+              <p className="eyebrow">LIVE RUNNING STATUS</p>
+              <h2>Start with your<br/><em>train number.</em></h2>
+              <p>Check the latest response supplied by our configured data provider. Every result includes its retrieval time.</p>
+              <div className="search-trust-list"><IconText icon={ShieldCheck}>API key stays server-side</IconText><IconText icon={Clock3}>Timestamped results</IconText></div>
+            </div>
+            <div className="search-column">
+              <form className="search-card" onSubmit={searchTrain}>
+                <div className="search-card-top"><div><span className="card-kicker">TRAIN ENQUIRY</span><h3>Where is your train?</h3></div><span className="card-icon"><TrainFront size={23}/></span></div>
+                <label htmlFor="train-number">Train number <span>5 digits</span></label>
+                <div className="input-shell"><TrainFront size={18}/><input id="train-number" name="train-number" inputMode="numeric" autoComplete="off" maxLength={5} pattern="[0-9]{5}" placeholder="e.g. 12919" value={trainNumber} onChange={(event) => setTrainNumber(event.target.value.replace(/\D/g, '').slice(0, 5))} required aria-describedby="train-number-hint"/><button type="button" className="input-clear" aria-label="Clear train number" onClick={() => setTrainNumber('')}><X size={15}/></button></div>
+                <div id="train-number-hint" className="field-hint">Enter a five-digit Indian train number.</div>
+                <label htmlFor="journey-date">Journey start date <span>Optional</span></label>
+                <div className="input-shell date-shell"><Clock3 size={18}/><input id="journey-date" type="date" value={journeyDate} onChange={(event) => setJourneyDate(event.target.value)} max="2099-12-31"/></div>
+                <button className="button button-dark search-submit" type="submit" disabled={busy}>{busy ? <><span className="button-loader"/> Checking status…</> : <><Search size={17}/> Find live status <ArrowRight size={17}/></>}</button>
+                <div className="search-form-foot"><span><span className="live-dot"/> {progressLabel}</span><span>Data availability varies</span></div>
+              </form>
+              {notice && <div className={`notice notice-${notice.kind}`} role="status"><span>{notice.kind === 'stale' ? <Clock3 size={17}/> : notice.kind === 'info' ? <Check size={17}/> : <WifiOff size={17}/>}</span><p>{notice.text}</p></div>}
+            </div>
           </div>
-          <div className="search-column">
-            <form className="search-card" onSubmit={searchTrain}>
-              <div className="search-card-top"><div><span className="card-kicker">TRAIN ENQUIRY</span><h3>Where is your train?</h3></div><span className="card-icon"><TrainFront size={23}/></span></div>
-              <label htmlFor="train-number">Train number <span>5 digits</span></label>
-              <div className="input-shell"><TrainFront size={18}/><input id="train-number" name="train-number" inputMode="numeric" autoComplete="off" maxLength={5} pattern="[0-9]{5}" placeholder="e.g. 12919" value={trainNumber} onChange={(event) => setTrainNumber(event.target.value.replace(/\D/g, '').slice(0, 5))} required aria-describedby="train-number-hint"/><button type="button" className="input-clear" aria-label="Clear train number" onClick={() => setTrainNumber('')}><X size={15}/></button></div>
-              <div id="train-number-hint" className="field-hint">Enter a five-digit Indian train number.</div>
-              <label htmlFor="journey-date">Journey start date <span>Optional</span></label>
-              <div className="input-shell date-shell"><Clock3 size={18}/><input id="journey-date" type="date" value={journeyDate} onChange={(event) => setJourneyDate(event.target.value)} max="2099-12-31"/></div>
-              <button className="button button-dark search-submit" type="submit" disabled={busy}>{busy ? <><span className="button-loader"/> Checking status…</> : <><Search size={17}/> Find live status <ArrowRight size={17}/></>}</button>
-              <div className="search-form-foot"><span><span className="live-dot"/> {progressLabel}</span><span>Data availability varies</span></div>
-            </form>
-            {notice && <div className={`notice notice-${notice.kind}`} role="status"><span>{notice.kind === 'stale' ? <Clock3 size={17}/> : notice.kind === 'info' ? <Check size={17}/> : <WifiOff size={17}/>}</span><p>{notice.text}</p></div>}
-            {result && <StatusResult result={result} mode={resultMode} onRefresh={() => searchTrain()} refreshing={busy}/>}
-          </div>
+          {result && <StatusResult result={result} mode={resultMode} onRefresh={() => searchTrain()} refreshing={busy}/>}
         </section>
 
         <section className="journey-explorer-section" id="journey-explorer">
