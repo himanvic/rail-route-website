@@ -79,7 +79,8 @@ h1, h2, h3, h4, p { margin-top: 0; }
 .hero-scroll-indicator { position: absolute; left: 30px; bottom: 23px; display: flex; align-items: center; gap: 9px; font-size: 8px; letter-spacing: .16em; color: #c5c0b4; }
 .hero-scroll-indicator span { width: 24px; height: 1px; background: #c4a46b; }
 
-.search-section { display: grid; grid-template-columns: minmax(0, .84fr) minmax(480px, 1.16fr); gap: clamp(45px, 8vw, 120px); padding-top: 112px; padding-bottom: 111px; align-items: start; }
+.search-section { display: flex; flex-direction: column; gap: clamp(32px, 4.5vw, 56px); padding-top: 112px; padding-bottom: 111px; }
+.search-query-row { display: grid; grid-template-columns: minmax(0, .84fr) minmax(480px, 1.16fr); gap: clamp(45px, 8vw, 120px); align-items: start; }
 .section-intro { padding-top: 17px; }
 .section-intro h2, .feature-heading h2, .pnr-copy h2, .closing-banner h2 { font-family: Georgia, "Times New Roman", serif; font-size: clamp(36px, 4.1vw, 53px); font-weight: 400; letter-spacing: -.045em; line-height: 1.07; margin-bottom: 22px; }
 .section-intro h2 em, .feature-heading h2 em, .closing-banner h2 em { color: var(--gold-dark); }
@@ -278,7 +279,7 @@ h1, h2, h3, h4, p { margin-top: 0; }
 
 @media (max-width: 1000px) {
   .wrap { width: min(100% - 42px, 900px); }
-  .search-section { grid-template-columns: minmax(0, .76fr) minmax(390px, 1.24fr); gap: 36px; }
+  .search-query-row { grid-template-columns: minmax(0, .76fr) minmax(390px, 1.24fr); gap: 36px; }
   .footer-main { grid-template-columns: 1.3fr .8fr .9fr; }
 }
 @media (max-width: 760px) {
@@ -303,7 +304,8 @@ h1, h2, h3, h4, p { margin-top: 0; }
   .hero-side-note { display: none; }
   .hero-image-caption { right: 16px; bottom: 26px; }
   .hero-scroll-indicator { left: 24px; bottom: 27px; }
-  .search-section { grid-template-columns: minmax(0, 1fr); gap: 30px; padding-top: 76px; padding-bottom: 73px; }
+  .search-section { padding-top: 76px; padding-bottom: 73px; gap: 28px; }
+  .search-query-row { grid-template-columns: minmax(0, 1fr); gap: 30px; }
   .section-intro { padding-top: 0; }
   .section-intro h2 { font-size: 43px; }
   .section-intro > p:not(.eyebrow) { max-width: 440px; }
